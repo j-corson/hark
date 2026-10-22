@@ -78,11 +78,36 @@ def build_prompt(brief: str, document: str, speakers: list[str], earlier: list[s
     return "\n\n".join(parts)
 
 
+def find_claude() -> str | None:
+    """Find the Claude Code CLI, even when started without your shell's PATH (e.g. as a service)."""
+    if os.environ.get("HARK_CLAUDE"):
+        return os.environ["HARK_CLAUDE"]
+    found = shutil.which("claude")
+    if found:
+        return found
+    home = os.path.expanduser("~")
+    names = ["claude.exe", "claude.cmd", "claude"] if os.name == "nt" else ["claude"]
+    dirs = [
+        os.path.join(home, ".local", "bin"),
+        os.path.join(home, ".claude", "local"),
+        os.path.join(home, ".npm-global", "bin"),
+        os.path.join(home, ".bun", "bin"),
+        os.path.join(os.environ.get("APPDATA", ""), "npm"),
+        "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin",
+    ]
+    for d in dirs:
+        for n in names:
+            p = os.path.join(d, n)
+            if os.path.isfile(p) and os.access(p, os.X_OK):
+                return p
+    return None
+
+
 class Scribe:
     def __init__(self, model: str = "sonnet", effort: str | None = "low", claude_bin: str | None = None):
         self.model = model
         self.effort = effort
-        self.bin = claude_bin or shutil.which("claude")
+        self.bin = claude_bin or find_claude()
         self.flags: set[str] = set()
         self.workdir = tempfile.mkdtemp(prefix="hark-claude-")  # empty dir: no project CLAUDE.md
         # Pass the prompt as a file: long multi-line arguments get mangled by Windows .cmd shims.
