@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#eef1f4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#15181d" media="(prefers-color-scheme: dark)">
+<title>hark</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232f55c9'/%3E%3Cpath d='M9 12h14M9 17h10M9 22h12' stroke='%23ffe45c' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:ital,wght@0,400;0,600;0,700;1,400&display=swap">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="bar">
+  <div class="listen">
+    <button id="startBtn" class="primary" type="button">Start listening</button>
+    <div id="sourceMenu" class="popover" hidden>
+      <button type="button" data-start="mic"><strong>Room</strong><span>Everyone near this device's microphone</span></button>
+      <button type="button" data-start="call" id="callOpt"><strong>Call</strong><span>Your mic, plus audio from a Teams tab or your screen</span></button>
+    </div>
+    <span id="meters" class="meters" aria-hidden="true"></span>
+  </div>
+  <div id="status" class="status" role="status" aria-live="polite"></div>
+  <div class="tools">
+    <select id="modeSel" aria-label="Document type"></select>
+    <button id="undoBtn" type="button" class="quiet" disabled title="Undo the last change">Undo</button>
+    <button id="menuBtn" type="button" class="quiet" aria-haspopup="true" aria-label="More">More</button>
+    <div id="moreMenu" class="popover right" hidden>
+      <button type="button" data-act="edit">Edit as text</button>
+      <button type="button" data-act="update">Update now</button>
+      <button type="button" data-act="copy">Copy Markdown</button>
+      <button type="button" data-act="download">Download .md</button>
+      <button type="button" data-act="brief">Instructions for Claude…</button>
+      <button type="button" data-act="sessions">Open a previous session…</button>
+      <button type="button" data-act="new">New session</button>
+    </div>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="sheetwrap" id="docPane">
+    <article id="doc" class="sheet" aria-label="Live document"></article>
+    <div id="rawWrap" class="sheet raw" hidden>
+      <textarea id="raw" spellcheck="true" aria-label="Document Markdown"></textarea>
+      <div class="rawbar">
+        <span>Claude waits while you edit.</span>
+        <button id="rawCancel" type="button" class="quiet">Cancel</button>
+        <button id="rawSave" type="button" class="primary">Save</button>
+      </div>
+    </div>
+  </section>
+
+  <aside class="side" id="sidePane" aria-label="Transcript">
+    <div class="speakers" id="speakers"></div>
+    <ol class="transcript" id="transcript"></ol>
+    <p class="empty" id="trEmpty">What people say appears here. Click a name to rename that speaker; giving two speakers the same name merges them.</p>
+  </aside>
+</main>
+
+<footer class="dock">
+  <form id="sayForm" class="say">
+    <input id="sayInput" autocomplete="off" placeholder="Tell Claude what to change, e.g. “make Actions a table”" aria-label="Instruction for Claude">
+    <button type="submit" class="quiet">Send</button>
+  </form>
+  <button id="tabBtn" type="button" class="quiet tab">Transcript</button>
+</footer>
+
+<dialog id="briefDlg">
+  <form method="dialog" class="dlg">
+    <h2>Instructions for Claude</h2>
+    <p class="hint">How Claude should organise this document. This applies to the current session only.</p>
+    <textarea id="briefText" rows="14"></textarea>
+    <label class="inline">Update at most every <input id="intervalIn" type="number" min="3" max="300"> seconds</label>
+    <div class="row"><button value="cancel" class="quiet">Cancel</button><button value="ok" class="primary" id="briefSave">Save</button></div>
+  </form>
+</dialog>
+
+<dialog id="sessDlg">
+  <form method="dialog" class="dlg">
+    <h2>Previous sessions</h2>
+    <p class="hint" id="sessDir"></p>
+    <ul id="sessList" class="sesslist"></ul>
+    <div class="row"><button value="cancel" class="quiet">Close</button></div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" role="alert" hidden></div>
+<script src="/static/md.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
