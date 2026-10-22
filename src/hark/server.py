@@ -27,10 +27,13 @@ def make_app(hub: Hub, token: str) -> web.Application:
         if key is not None:
             if not hmac.compare_digest(key, token):
                 raise web.HTTPForbidden(text="Wrong key. Use the link printed in the terminal.")
-            resp = web.HTTPFound("/")
-            resp.set_cookie(COOKIE, token, max_age=400 * 86400, httponly=True, samesite="Strict",
-                            secure=request.scheme == "https")
-            raise resp
+            # Serve the page straight away (no redirect) and remember the key in a cookie.
+            # Lax, not Strict: links opened from another app are cross-site navigations,
+            # and Strict cookies would be withheld from them.
+            resp = await handler(request)
+            resp.set_cookie(COOKIE, token, max_age=400 * 86400, httponly=True, samesite="Lax",
+                            secure=request.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https")
+            return resp
         if not authed(request):
             raise web.HTTPForbidden(text="Open hark using the link printed in the terminal (it carries a key).")
         return await handler(request)

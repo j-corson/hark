@@ -473,6 +473,8 @@
   }
 
   // ---------------------------------------------------------------- boot
+  // The key is now in a cookie; drop it from the address bar.
+  if (location.search.includes("k=")) history.replaceState(null, "", location.pathname);
   fetch("/modes").then((r) => r.json()).then((modes) => {
     st.modes = modes;
     const sel = $("modeSel");
