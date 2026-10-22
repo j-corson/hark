@@ -24,15 +24,30 @@ from .session import default_data_dir
 CONFIG = Path(os.environ.get("HARK_CONFIG", Path.home() / ".config" / "hark"))
 
 
+def _config_dir() -> Path:
+    CONFIG.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        CONFIG.chmod(0o700)
+    except OSError:
+        pass
+    return CONFIG
+
+
+def _write_private(path: Path, data: bytes) -> None:
+    """Write a secret so it is never readable by other users, even briefly."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+    try:
+        path.chmod(0o600)  # in case the file already existed with wider permissions
+    except OSError:
+        pass
+
+
 def token() -> str:
-    CONFIG.mkdir(parents=True, exist_ok=True)
-    f = CONFIG / "key"
+    f = _config_dir() / "key"
     if not f.exists():
-        f.write_text(secrets.token_urlsafe(18))
-        try:
-            f.chmod(0o600)
-        except OSError:
-            pass
+        _write_private(f, secrets.token_urlsafe(18).encode())
     return f.read_text().strip()
 
 
@@ -73,7 +88,8 @@ def tls_context(ips: list[str]) -> ssl.SSLContext:
                 .serial_number(x509.random_serial_number()).not_valid_before(now - datetime.timedelta(days=1))
                 .not_valid_after(now + datetime.timedelta(days=825))
                 .add_extension(x509.SubjectAlternativeName(names), critical=False).sign(key, hashes.SHA256()))
-        key_f.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+        _config_dir()
+        _write_private(key_f, key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
         cert_f.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
         ips_f.write_text(want)
     ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
