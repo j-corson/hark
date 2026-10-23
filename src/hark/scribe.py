@@ -24,6 +24,7 @@ SYSTEM = """You are the scribe for a live document that people glance at while t
 - <typed_instructions>, if present: instructions the user typed to you. Carry them out.
 - <add_research>, if present: research findings the user chose to add. Work each one into the most fitting place in the document (if nothing fits, add a short section such as "## Background reading"). Keep citations and links (as Markdown links, [text](url)), and stay terse.
 - <research_requests>, if present: lookups already requested in this session.
+- <research_findings>, if present: results of those lookups, shown to the user in a side panel but not yet in the document. Use them only when someone explicitly asks to add something from the research ("add those papers to the background", "put the Sorrell review in", "add the second one"). Then write it in with ordinary ops in the most fitting place, keeping citations and Markdown links ([text](url)), and list what you used in `research_used`.
 
 The transcript comes from automatic speech recognition, so read it charitably: fix obvious mis-hearings using context. Speaker labels come from automatic voice matching and can be wrong or split one person into two.
 
@@ -39,6 +40,8 @@ Return edits as `ops`, applied in order:
 To move something, delete it and insert it in its new place. Keep each `find` short but unambiguous.
 
 Optional `research`: when someone explicitly asks for something to be looked up, found, checked or suggested from outside the conversation ("Claude, find the seminal papers on this", "can we get the latest figure for X?", or the same in <typed_instructions>), add {"label": "...", "question": "..."}. `label` is what the user sees: at most 8 words (e.g. "Seminal rebound-effect papers"). Make the question self-contained, with the topic, field and any constraints. It runs in the background and its results are shown to the user separately, so do not put a placeholder in the document or record the request as content. Only for explicit requests, not every topic that comes up, and never one already in <research_requests>.
+
+Optional `research_used`: [{"id": 3, "items": [1, 2]}] for findings from <research_findings> you just added to the document (`id` from [R3], item numbers as listed).
 
 Optional `speaker_names`: map an auto-labelled speaker (e.g. "Speaker 2") to a real name only when the transcript makes it near-certain, e.g. someone introduces themselves or is addressed by name and that labelled speaker answers. Otherwise omit it."""
 
@@ -59,6 +62,10 @@ SCHEMA = {
             },
         },
         "speaker_names": {"type": "object", "additionalProperties": {"type": "string"}},
+        "research_used": {
+            "type": "array",
+            "items": {"type": "object", "properties": {"id": {"type": "integer"}, "items": {"type": "array", "items": {"type": "integer"}}}, "required": ["id"]},
+        },
         "research": {
             "type": "array",
             "items": {"type": "object", "properties": {"label": {"type": "string"}, "question": {"type": "string"}}, "required": ["question"]},
@@ -73,7 +80,7 @@ class ScribeError(Exception):
 
 
 def build_prompt(brief: str, document: str, speakers: list[str], earlier: list[str], new: list[str], typed: list[str],
-                 add_research: list[str] | None = None, requested: list[str] | None = None) -> str:
+                 add_research: list[str] | None = None, requested: list[str] | None = None, findings: list[str] | None = None) -> str:
     parts = [f"<brief>\n{brief.strip()}\n</brief>"]
     if speakers:
         parts.append("<speakers>\n" + "\n".join(f"- {s}" for s in speakers) + "\n</speakers>")
@@ -87,6 +94,8 @@ def build_prompt(brief: str, document: str, speakers: list[str], earlier: list[s
         parts.append("<add_research>\n" + "\n\n".join(add_research) + "\n</add_research>")
     if requested:
         parts.append("<research_requests>\n" + "\n".join(f"- {q}" for q in requested) + "\n</research_requests>")
+    if findings:
+        parts.append("<research_findings>\n" + "\n\n".join(findings) + "\n</research_findings>")
     parts.append("Return the edit operations.")
     return "\n\n".join(parts)
 

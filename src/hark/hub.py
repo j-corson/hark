@@ -30,6 +30,21 @@ ERROR_BACKOFF = 20
 MAX_RESEARCH = 2  # lookups running at once; more wait their turn
 
 
+def research_findings(s: Session, jobs: int = 8) -> list[str]:
+    """Finished lookups with findings not yet in the document, numbered for the scribe to refer to."""
+    out = []
+    for j in [j for j in s.research if j["state"] == "done"][-jobs:]:
+        items = [(i, it) for i, it in enumerate(j["items"], 1) if not it.get("added")]
+        if not items:
+            continue
+        lines = [f"[R{j['id']}] {j.get('label') or j['q']}"]
+        for i, it in items:
+            link = f" <{it['url']}>" if it.get("url") else ""
+            lines.append(f"  {i}. {it['title']}{link}" + (f": {it['note']}" if it.get("note") else ""))
+        out.append("\n".join(lines))
+    return out
+
+
 class Client:
     def __init__(self, ws):
         self.ws = ws
@@ -223,10 +238,11 @@ class Hub:
         adds = [t for (ss, t) in self.promote if ss is s]
         self.promote = [(ss, t) for (ss, t) in self.promote if ss is not s]
         requested = [j["q"] for j in s.research[-15:]]
+        findings = research_findings(s)
         earlier = [s.fmt_line(l) for l in s.lines[max(0, s.processed - CONTEXT_LINES):s.processed] if l["kind"] == "speech"]
         new = [s.fmt_line(l) for l in pending if l["kind"] == "speech"]
         typed = [l["text"] for l in pending if l["kind"] == "typed"]
-        prompt = build_prompt(s.brief, s.doc, s.speaker_notes(), earlier, new, typed, adds, requested)
+        prompt = build_prompt(s.brief, s.doc, s.speaker_notes(), earlier, new, typed, adds, requested, findings)
         detail = f"{len(pending)} new line{'s' * (len(pending) != 1)}" if pending else ""
         if adds:
             detail = (detail + ", " if detail else "") + "adding research"
@@ -283,6 +299,15 @@ class Hub:
             await self.push_doc(changed_lines(old, s.doc), by="claude")
         else:
             s.save()
+        for used in data.get("research_used") or []:
+            job = s.research_job((used or {}).get("id"))
+            if not job or job["state"] != "done":
+                continue
+            nums = used.get("items") or range(1, len(job["items"]) + 1)
+            for n in nums:
+                if isinstance(n, int) and 1 <= n <= len(job["items"]):
+                    job["items"][n - 1]["added"] = True
+            await self.push_research(s, job)
         if renamed:
             await self.push_state()
         else:

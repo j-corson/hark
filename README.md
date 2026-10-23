@@ -60,6 +60,7 @@ The panel beside the document (the **Research** tab; on a phone, the **Research*
 
 - **Ask out loud**, for example "Claude, can you find the seminal papers on this?", or in **Tell Claude**. Claude spots explicit requests, not every topic that comes up. You can also type a request into **Look something up**.
 - Each request becomes a card. A separate Claude call with web search and page fetching (and no other tools) checks its sources and returns a one-line answer and up to five findings with links. This usually takes 20–60 seconds. At most two run at once.
+- Say it out loud too: "add the Sorrell review to the background" or "put those papers in". Claude adds just what was asked for, and the panel marks it as added.
 - **Add** puts one finding into the document and **Add all to document** puts in the lot. Claude places them where they fit. Nothing from research goes into the document until you add it.
 - Untick **Start right away when someone asks out loud** to have spoken requests wait for you to press **Research this**.
 - Findings are saved with the session, in `research.md`.
