@@ -258,7 +258,12 @@ class Hub:
         n = len(ops) - len(failed)
         if failed:
             log.info("skipped %d edit(s) whose anchors were not found: %s", len(failed), failed)
-        self.claude = {"state": "idle", "detail": f"{n} edit{'s' * (n != 1)} in {took:.0f}s" + (f", {len(failed)} skipped" if failed else "")}
+        if not ops:
+            hint = " (Co-writing only records what you dictate; use Meeting or Notes for a conversation)" if s.mode == "outline" else ""
+            detail = f"nothing new to add{hint}"
+        else:
+            detail = f"{n} edit{'s' * (n != 1)} in {took:.0f}s" + (f", {len(failed)} skipped" if failed else "")
+        self.claude = {"state": "idle", "detail": detail}
         if s.set_doc(new):
             await self.push_doc(changed_lines(old, s.doc), by="claude")
         else:
