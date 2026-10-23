@@ -1,7 +1,7 @@
 // hark page: capture audio, show the live document and transcript, send edits.
 (function () {
   const $ = (id) => document.getElementById(id);
-  const { blocks, esc } = window.MD;
+  const { blocks, esc, shareText } = window.MD;
   const FRESH_MS = 25000;
   const SOURCE_ID = { mic: 0, call: 1 };
 
@@ -418,8 +418,12 @@
     } else if (act === "download") {
       const a = document.createElement("a");
       a.href = URL.createObjectURL(new Blob([st.doc], { type: "text/markdown" }));
-      a.download = ((st.session && st.session.title) || "notes").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-") + ".md";
+      a.download = fileName(".md");
       a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    } else if (act === "share") {
+      share({ title: docTitle(), text: shareText(st.doc) });
+    } else if (act === "sharefile") {
+      share({ title: docTitle(), files: [shareFile()] });
     } else if (act === "brief") {
       $("briefText").value = st.session.brief;
       $("intervalIn").value = st.session.interval;
@@ -435,6 +439,28 @@
   $("briefDlg").addEventListener("close", () => {
     if ($("briefDlg").returnValue === "ok") send({ type: "set_brief", brief: $("briefText").value, interval: +$("intervalIn").value });
   });
+
+  // "2026-10-23 Budget review.md": the session's date, then its title.
+  function docTitle() { return (st.session && st.session.title) || "Notes"; }
+  function fileName(ext) {
+    const date = st.session ? st.session.id.slice(0, 10) : new Date().toISOString().slice(0, 10);
+    const t = docTitle().replace(/[\\/:*?"<>|#%{}^~\[\]`]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+    return `${date} ${t || "Notes"}${ext}`;
+  }
+  // Android Chrome won't share .md files, so fall back to .txt there.
+  function shareFile() {
+    const md = new File([st.doc], fileName(".md"), { type: "text/markdown" });
+    if (navigator.canShare && navigator.canShare({ files: [md] })) return md;
+    return new File([st.doc], fileName(".txt"), { type: "text/plain" });
+  }
+  async function share(data) {
+    try { await navigator.share(data); }
+    catch (e) { if (e.name !== "AbortError") toast("This browser couldn't share that. Use Copy Markdown or Download instead."); }
+  }
+  const canWebShare = !!navigator.share;
+  const canShareFiles = !!(navigator.canShare && navigator.canShare({ files: [new File(["x"], "x.txt", { type: "text/plain" })] }));
+  if (!canWebShare) $("shareBtn").hidden = true;
+  if (!canShareFiles) $("shareFileBtn").hidden = true;
 
   function renderSessions() {
     $("sessDir").textContent = st.session ? `Saved as Markdown in ${st.session.dir.replace(/[\\/][^\\/]+$/, "")}` : "";

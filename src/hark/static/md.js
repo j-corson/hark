@@ -69,5 +69,40 @@
     return out;
   }
 
-  window.MD = { blocks, inline, esc };
+  // Plain text for pasting into WhatsApp, email and the like: *bold* headings, • bullets,
+  // ☐/☑ checkboxes, links as "text (url)", and headings with nothing under them dropped.
+  function shareText(md) {
+    const lines = md.replace(/\r\n/g, "\n").split("\n");
+    const level = (l) => { const m = l.match(/^(#{1,6})\s/); return m ? m[1].length : 0; };
+    const empty = (i) => {
+      for (let j = i + 1; j < lines.length; j++) {
+        if (!lines[j].trim()) continue;
+        const lv = level(lines[j]);
+        return lv > 0 && lv <= level(lines[i]);
+      }
+      return true;
+    };
+    const inl = (t) => t
+      .replace(/\*\*([^*]+)\*\*/g, "*$1*")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, "$1 ($2)");
+    const out = [];
+    lines.forEach((l, i) => {
+      const lv = level(l);
+      if (lv) {
+        if (lv > 1 && empty(i)) return;
+        const t = l.replace(/^#+\s+/, "").replace(/\s*#*\s*$/, "").replace(/\*\*/g, "");
+        if (out.length && out[out.length - 1] !== "") out.push("");
+        out.push(lv <= 2 ? `*${t}*` : `_${t}_`);
+        return;
+      }
+      if (isTable(l) && isSep(l)) return;
+      const m = l.match(/^(\s*)[-*+]\s+(\[( |x|X)\]\s+)?(.*)$/);
+      if (m) out.push(m[1] + (m[2] ? (m[3] === " " ? "☐ " : "☑ ") : "• ") + inl(m[4]));
+      else out.push(inl(l));
+    });
+    return out.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
+  }
+
+  window.MD = { blocks, inline, esc, shareText };
 })();

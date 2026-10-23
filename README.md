@@ -72,6 +72,8 @@ Each session is a folder in `~/Documents/Hark/` (change it with `--data-dir`):
 
 Use **More → Open a previous session** to pick one up again, or **More → New session** to start fresh. Audio is never saved.
 
+To send the document to someone, use **More → Share…**, which opens your phone's share sheet (WhatsApp, email and so on) with the document as tidy text. **Share as file…** attaches it instead. Downloaded and shared files are named with the date and title, for example `2026-10-23 Budget review with finance.md`. On Android the shared file is a `.txt`, because Chrome won't share `.md` files.
+
 ## Options
 
 | Option | What it does |

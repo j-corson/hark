@@ -16,6 +16,8 @@ MODES = {
 - Actions: `- [ ] **Owner**: task (due date if one was given)`.
 - Open questions: unresolved issues and things someone said they would check.
 
+Once the topic is clear, replace the "Meeting notes" H1 with a short descriptive title (e.g. "# Budget review with finance"). It names the saved file.
+
 When something said earlier is corrected ("it's 43, not 42"), fix the existing text instead of adding a new bullet. Drop small talk and procedure. Name people only where it matters (who owns an action, who disagreed).""",
     },
     "outline": {
@@ -35,7 +37,7 @@ When something said earlier is corrected ("it's 43, not 42"), fix the existing t
         "label": "Notes",
         "interval": 15,
         "template": "# Notes\n",
-        "brief": """Keep concise, well-organised notes of the conversation's content. Group points under ## headings by topic, and create or rename headings as the topics become clear. Prefer specifics (names, numbers, dates, references) over generalities.""",
+        "brief": """Keep concise, well-organised notes of the conversation's content. Group points under ## headings by topic, and create or rename headings as the topics become clear. Prefer specifics (names, numbers, dates, references) over generalities. Once the subject is clear, replace the "Notes" H1 with a short descriptive title; it names the saved file.""",
     },
 }
 
