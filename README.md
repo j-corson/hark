@@ -54,7 +54,7 @@ The link includes a private key, and only browsers that have opened it can conne
 - While you're editing, Claude waits. Its next update applies small anchored changes to the document as it now stands, so your wording isn't reverted.
 - Text Claude has just added or changed is highlighted for about 25 seconds.
 
-## Research (alpha)
+## Research
 
 The panel beside the document (the **Research** tab; on a phone, the **Research** button) runs lookups in the background while you keep talking.
 

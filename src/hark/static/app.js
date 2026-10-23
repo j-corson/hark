@@ -73,7 +73,7 @@
   }
 
   // ---------------------------------------------------------------- document
-  function renderTitle(t) { document.title = t ? `${t} – hark alpha` : "hark alpha"; }
+  function renderTitle(t) { document.title = t ? `${t} – hark` : "hark"; }
 
   function freshAge(start, end, lines) {
     const now = Date.now();
