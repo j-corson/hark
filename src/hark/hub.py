@@ -19,7 +19,7 @@ import numpy as np
 
 from .docops import apply_ops, changed_lines
 from .engine import SR, AudioStream, Engine
-from .research import Researcher
+from .research import Researcher, clean, clean_url
 from .scribe import Scribe, ScribeError, build_prompt
 from .session import Session, list_sessions
 
@@ -37,10 +37,11 @@ def research_findings(s: Session, jobs: int = 8) -> list[str]:
         items = [(i, it) for i, it in enumerate(j["items"], 1) if not it.get("added")]
         if not items:
             continue
-        lines = [f"[R{j['id']}] {j.get('label') or j['q']}"]
+        lines = [f"[R{j['id']}] {clean(j.get('label') or j['q'], 120)}"]
         for i, it in items:
-            link = f" <{it['url']}>" if it.get("url") else ""
-            lines.append(f"  {i}. {it['title']}{link}" + (f": {it['note']}" if it.get("note") else ""))
+            url = clean_url(it.get("url"))
+            note = clean(it.get("note"), 250)
+            lines.append(f"  {i}. {clean(it['title'], 250)}" + (f" ({url})" if url else "") + (f": {note}" if note else ""))
         out.append("\n".join(lines))
     return out
 
@@ -299,15 +300,23 @@ class Hub:
             await self.push_doc(changed_lines(old, s.doc), by="claude")
         else:
             s.save()
-        for used in data.get("research_used") or []:
-            job = s.research_job((used or {}).get("id"))
+        # Findings Claude says it added by voice request. Only mark ones whose link or
+        # title really went into the document, so the panel's Add buttons stay honest.
+        written = "\n".join(str(o.get("text") or "") for o in ops if isinstance(o, dict))
+        for used in (data.get("research_used") or [])[:10]:
+            job = s.research_job(used.get("id")) if isinstance(used, dict) else None
             if not job or job["state"] != "done":
                 continue
             nums = used.get("items") or range(1, len(job["items"]) + 1)
-            for n in nums:
+            touched = False
+            for n in list(nums)[:10]:
                 if isinstance(n, int) and 1 <= n <= len(job["items"]):
-                    job["items"][n - 1]["added"] = True
-            await self.push_research(s, job)
+                    it = job["items"][n - 1]
+                    if (it.get("url") and it["url"] in written) or it["title"][:40] in written:
+                        it["added"] = touched = True
+            if touched:
+                s.save()
+                await self.push_research(s, job)
         if renamed:
             await self.push_state()
         else:
@@ -353,7 +362,7 @@ class Hub:
         job.update(state="running", started=time.time(), error="")
         await self.push_research(s, job)
         try:
-            result, took = await self.researcher.run(job["q"], s.doc)
+            result, took = await self.researcher.run(job["q"], s.title)
             job.update(result, state="done", took=round(took))
         except asyncio.CancelledError:
             job.update(state="cancelled")
