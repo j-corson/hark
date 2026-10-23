@@ -133,6 +133,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--mode", default="meeting", choices=list(MODES), help="starting document mode (switchable in the app)")
     p.add_argument("--lan", action="store_true", help="also serve over HTTPS on your local network (to use a phone)")
     p.add_argument("--model", default=os.environ.get("HARK_MODEL", "sonnet"), help="Claude model alias for document updates (default: sonnet)")
+    p.add_argument("--research-model", default=os.environ.get("HARK_RESEARCH_MODEL"), help="Claude model for background research (default: same as --model)")
     p.add_argument("--effort", default="low", help="Claude effort level (low/medium/high); low keeps updates quick")
     p.add_argument("--asr", default=os.environ.get("HARK_ASR", "parakeet"), choices=["parakeet", "moonshine"],
                    help="speech model: parakeet (accurate, multilingual) or moonshine (faster, English)")
@@ -164,7 +165,8 @@ def main(argv: list[str] | None = None) -> None:
         print("\n  ! Claude Code CLI not found: transcripts will work but the document won't update.\n"
               "    Install it (https://claude.com/claude-code) and run `claude` once to log in.\n", file=sys.stderr)
     args.data_dir.mkdir(parents=True, exist_ok=True)
-    hub = Hub(engine, scribe, args.data_dir, args.speaker_threshold)
+    from .research import Researcher
+    hub = Hub(engine, scribe, args.data_dir, args.speaker_threshold, Researcher(scribe, args.research_model))
     hub.session.set_mode(args.mode)
     key = token()
     app = make_app(hub, key)

@@ -48,6 +48,9 @@ class Session:
         self.processed = 0  # lines[:processed] are reflected in the document
         self.speakers = Speakers(threshold)
         self._next_line = 1
+        self.research: list[dict] = []  # background lookups, newest last
+        self.research_auto = True  # start lookups people ask for out loud without asking first
+        self._next_research = 1
 
     # -- paths / naming -----------------------------------------------------
     @property
@@ -61,7 +64,7 @@ class Session:
 
     @property
     def untouched(self) -> bool:
-        return not self.lines and self.doc.strip() == MODES[self.mode]["template"].strip()
+        return not self.lines and not self.research and self.doc.strip() == MODES[self.mode]["template"].strip()
 
     # -- mutations ----------------------------------------------------------
     def set_doc(self, markdown: str) -> bool:
@@ -86,6 +89,17 @@ class Session:
         self._next_line += 1
         self.lines.append(line)
         return line
+
+    def add_research(self, question: str, origin: str, state: str, label: str = "") -> dict:
+        job = {"id": self._next_research, "q": question.strip()[:500], "label": label.strip()[:120] or question.strip()[:120],
+               "origin": origin, "state": state,
+               "created": time.time(), "answer": "", "items": [], "error": "", "took": 0}
+        self._next_research += 1
+        self.research.append(job)
+        return job
+
+    def research_job(self, jid) -> dict | None:
+        return next((j for j in self.research if j["id"] == jid), None)
 
     def set_mode(self, mode: str) -> None:
         if mode not in MODES:
@@ -118,6 +132,7 @@ class Session:
             "lines": [self.public_line(l) for l in self.lines[-400:]],
             "processed_id": self.lines[self.processed - 1]["id"] if self.processed else 0,
             "speakers": self.speakers.public(), "dir": str(self.dir),
+            "research": self.research, "research_auto": self.research_auto,
         }
 
     # -- persistence --------------------------------------------------------
@@ -131,10 +146,14 @@ class Session:
             prefix = "(typed) " if l["kind"] == "typed" else ""
             tr.append(f"{prefix}{self.fmt_line(l)}")
         _atomic_write(self.dir / "transcript.md", "\n".join(tr) + "\n")
+        done = [j for j in self.research if j["state"] == "done"]
+        if done:
+            _atomic_write(self.dir / "research.md", research_markdown(self.title, done))
         state = {
             "id": self.id, "created": self.created, "mode": self.mode, "brief": self.brief, "interval": self.interval,
             "doc": self.doc, "history": self.history[-20:], "lines": self.lines, "processed": self.processed,
             "next_line": self._next_line, "speakers": self.speakers.to_json(),
+            "research": self.research, "research_auto": self.research_auto, "next_research": self._next_research,
         }
         _atomic_write(self.dir / "session.json", json.dumps(state))
 
@@ -152,7 +171,26 @@ class Session:
         s.processed = d.get("processed", len(s.lines))
         s._next_line = d.get("next_line", len(s.lines) + 1)
         s.speakers.load_json(d.get("speakers", {}))
+        s.research = d.get("research", [])
+        for j in s.research:
+            if j["state"] in ("queued", "running"):  # hark was restarted mid-lookup
+                j["state"], j["error"] = "error", "Interrupted when hark restarted"
+        s.research_auto = d.get("research_auto", True)
+        s._next_research = d.get("next_research", len(s.research) + 1)
         return s
+
+
+def research_markdown(title: str, jobs: list[dict]) -> str:
+    out = [f"# Research: {title}", ""]
+    for j in jobs:
+        out += [f"## {j.get('label') or j['q']}", "", f"_{j['q']}_", ""]
+        if j.get("answer"):
+            out += [j["answer"], ""]
+        for it in j.get("items", []):
+            link = f" <{it['url']}>" if it.get("url") else ""
+            out.append(f"- **{it['title']}**{link}" + (f": {it['note']}" if it.get("note") else ""))
+        out.append("")
+    return "\n".join(out)
 
 
 def list_sessions(root: Path, limit: int = 30) -> list[dict]:

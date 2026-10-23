@@ -22,6 +22,8 @@ SYSTEM = """You are the scribe for a live document that people glance at while t
 - <earlier_transcript>: recent speech already reflected in the document (context only).
 - <new_transcript>: speech since your last update. Bring the document up to date with it.
 - <typed_instructions>, if present: instructions the user typed to you. Carry them out.
+- <add_research>, if present: research findings the user chose to add. Work each one into the most fitting place in the document (if nothing fits, add a short section such as "## Background reading"). Keep citations and links (as Markdown links, [text](url)), and stay terse.
+- <research_requests>, if present: lookups already requested in this session.
 
 The transcript comes from automatic speech recognition, so read it charitably: fix obvious mis-hearings using context. Speaker labels come from automatic voice matching and can be wrong or split one person into two.
 
@@ -35,6 +37,8 @@ Return edits as `ops`, applied in order:
 - {"op":"replace","find":"<exact existing text>","text":"<replacement>"}: for corrections, rewrites and moves. `find` must be copied character-for-character from <document> and be unique; prefer whole lines.
 - {"op":"delete","find":"<exact existing text>"}
 To move something, delete it and insert it in its new place. Keep each `find` short but unambiguous.
+
+Optional `research`: when someone explicitly asks for something to be looked up, found, checked or suggested from outside the conversation ("Claude, find the seminal papers on this", "can we get the latest figure for X?", or the same in <typed_instructions>), add {"label": "...", "question": "..."}. `label` is what the user sees: at most 8 words (e.g. "Seminal rebound-effect papers"). Make the question self-contained, with the topic, field and any constraints. It runs in the background and its results are shown to the user separately, so do not put a placeholder in the document or record the request as content. Only for explicit requests, not every topic that comes up, and never one already in <research_requests>.
 
 Optional `speaker_names`: map an auto-labelled speaker (e.g. "Speaker 2") to a real name only when the transcript makes it near-certain, e.g. someone introduces themselves or is addressed by name and that labelled speaker answers. Otherwise omit it."""
 
@@ -55,6 +59,10 @@ SCHEMA = {
             },
         },
         "speaker_names": {"type": "object", "additionalProperties": {"type": "string"}},
+        "research": {
+            "type": "array",
+            "items": {"type": "object", "properties": {"label": {"type": "string"}, "question": {"type": "string"}}, "required": ["question"]},
+        },
     },
     "required": ["ops"],
 }
@@ -64,7 +72,8 @@ class ScribeError(Exception):
     pass
 
 
-def build_prompt(brief: str, document: str, speakers: list[str], earlier: list[str], new: list[str], typed: list[str]) -> str:
+def build_prompt(brief: str, document: str, speakers: list[str], earlier: list[str], new: list[str], typed: list[str],
+                 add_research: list[str] | None = None, requested: list[str] | None = None) -> str:
     parts = [f"<brief>\n{brief.strip()}\n</brief>"]
     if speakers:
         parts.append("<speakers>\n" + "\n".join(f"- {s}" for s in speakers) + "\n</speakers>")
@@ -74,6 +83,10 @@ def build_prompt(brief: str, document: str, speakers: list[str], earlier: list[s
     parts.append("<new_transcript>\n" + ("\n".join(new) if new else "(nothing new)") + "\n</new_transcript>")
     if typed:
         parts.append("<typed_instructions>\n" + "\n".join(f"- {t}" for t in typed) + "\n</typed_instructions>")
+    if add_research:
+        parts.append("<add_research>\n" + "\n\n".join(add_research) + "\n</add_research>")
+    if requested:
+        parts.append("<research_requests>\n" + "\n".join(f"- {q}" for q in requested) + "\n</research_requests>")
     parts.append("Return the edit operations.")
     return "\n\n".join(parts)
 
@@ -149,7 +162,7 @@ class Scribe:
         env.pop("ANTHROPIC_API_KEY", None)
         env.pop("ANTHROPIC_AUTH_TOKEN", None)
         if "--json-schema" not in self.flags:
-            prompt += '\n\nReply with only a JSON object: {"ops": [...], "speaker_names": {...}}'
+            prompt += '\n\nReply with only a JSON object: {"ops": [...], "speaker_names": {...}, "research": [{"label": "...", "question": "..."}]}'
         t = time.time()
         proc = await asyncio.create_subprocess_exec(
             *self._cmd(), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,

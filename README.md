@@ -54,6 +54,18 @@ The link includes a private key, and only browsers that have opened it can conne
 - While you're editing, Claude waits. Its next update applies small anchored changes to the document as it now stands, so your wording isn't reverted.
 - Text Claude has just added or changed is highlighted for about 25 seconds.
 
+## Research (alpha)
+
+The panel beside the document (the **Research** tab; on a phone, the **Research** button) runs lookups in the background while you keep talking.
+
+- **Ask out loud**, for example "Claude, can you find the seminal papers on this?", or in **Tell Claude**. Claude spots explicit requests, not every topic that comes up. You can also type a request into **Look something up**.
+- Each request becomes a card. A separate Claude call with web search and page fetching (and no other tools) checks its sources and returns a one-line answer and up to five findings with links. This usually takes 20–60 seconds. At most two run at once.
+- **Add** puts one finding into the document and **Add all to document** puts in the lot. Claude places them where they fit. Nothing from research goes into the document until you add it.
+- Untick **Start right away when someone asks out loud** to have spoken requests wait for you to press **Research this**.
+- Findings are saved with the session, in `research.md`.
+
+One lookup uses noticeably more of your plan than a document update: roughly as much as 5 to 10 updates.
+
 ## Speakers
 
 Voices are grouped automatically as Speaker 1, Speaker 2 and so on. Claude may fill in real names when it's obvious, for example when someone introduces themselves.
@@ -80,6 +92,7 @@ To send the document to someone, use **More → Share…**, which opens your pho
 |---|---|
 | `--mode meeting\|outline\|notes` | Starting mode. You can also switch in the app; while a document is still empty, switching changes its template. |
 | `--model sonnet` | Claude model for updates. `haiku` is lighter on usage, and `opus` is the most careful. |
+| `--research-model opus` | Claude model for research lookups. The default is the same as `--model`. |
 | `--asr parakeet\|moonshine` | Speech model. Parakeet (default) is accurate, adds punctuation and handles 25 European languages. Moonshine is English-only, smaller and faster, for older laptops. |
 | `--lan` | Also serve over HTTPS on your network, for your phone. |
 | `--replay file.m4a` | Feed a recording through as if it were live. Useful for old recordings or for trying hark out. Needs ffmpeg for formats other than WAV. |

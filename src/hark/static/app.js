@@ -9,7 +9,9 @@
     ws: null, session: null, status: {}, doc: "", version: 0, lines: [], speakers: {}, sessions: [],
     modes: {}, fresh: new Map(), editing: null, rawOpen: false, pendingRender: false,
     caps: {}, ctx: null, workletReady: null, wake: null, lastUserScroll: 0,
+    research: [], unseen: new Set(), tab: "research", view: "doc",
   };
+  const narrow = window.matchMedia("(max-width: 820px)");
 
   // ---------------------------------------------------------------- socket
   let retry = 0;
@@ -36,7 +38,19 @@
       st.lines = m.session.lines; st.speakers = m.session.speakers;
       $("modeSel").value = m.session.mode;
       $("undoBtn").disabled = !m.session.can_undo;
-      renderDoc(); renderTranscript(); renderSpeakers(); renderTitle(m.session.title);
+      st.research = m.session.research || []; st.unseen.clear();
+      $("autoRes").checked = !!m.session.research_auto;
+      renderDoc(); renderTranscript(); renderSpeakers(); renderTitle(m.session.title); renderResearch();
+    } else if (m.type === "research") {
+      const i = st.research.findIndex((j) => j.id === m.job.id);
+      const prev = i >= 0 ? st.research[i] : null;
+      if (i >= 0) st.research[i] = m.job; else st.research.push(m.job);
+      if (m.job.state === "done" && (!prev || prev.state !== "done") && !researchVisible()) st.unseen.add(m.job.id);
+      if (!prev && m.job.origin === "conversation" && !researchVisible()) st.unseen.add(m.job.id);
+      renderResearch();
+    } else if (m.type === "research_removed") {
+      st.research = st.research.filter((j) => j.id !== m.id); st.unseen.delete(m.id);
+      renderResearch();
     } else if (m.type === "doc") {
       if (m.by === "claude" && m.changed.length) {
         const ls = m.doc.split("\n"), now = Date.now();
@@ -59,7 +73,7 @@
   }
 
   // ---------------------------------------------------------------- document
-  function renderTitle(t) { document.title = t ? `${t} – hark` : "hark"; }
+  function renderTitle(t) { document.title = t ? `${t} – hark alpha` : "hark alpha"; }
 
   function freshAge(start, end, lines) {
     const now = Date.now();
@@ -207,7 +221,7 @@
     st.lines.forEach((l) => ol.appendChild(lineNode(l)));
     $("trEmpty").hidden = st.lines.length > 0;
     markPending();
-    $("sidePane").scrollTop = $("sidePane").scrollHeight;
+    if (st.tab === "transcript") $("sidePane").scrollTop = $("sidePane").scrollHeight;
   }
   function appendLine(l) {
     const pane = $("sidePane");
@@ -215,7 +229,7 @@
     $("transcript").appendChild(lineNode(l));
     $("trEmpty").hidden = true;
     markPending();
-    if (atBottom) pane.scrollTop = pane.scrollHeight;
+    if (atBottom && st.tab === "transcript") pane.scrollTop = pane.scrollHeight;
   }
   // Lines Claude has already worked into the document are dimmed.
   function markPending() {
@@ -272,6 +286,7 @@
     else if (listening) text = s.pending ? `Listening. ${s.pending} new line${s.pending === 1 ? "" : "s"} for the next update.` : (c.detail ? `Listening. Last update: ${c.detail}.` : "Listening.");
     else text = c.detail ? `Last update: ${c.detail}.` : "Not listening.";
     if (s.backlog > 4) text += ` Transcription is ${Math.round(s.backlog)}s behind.`;
+    if (s.researching) text += ` Researching ${s.researching} question${s.researching === 1 ? "" : "s"}.`;
     setStatusText(text, cls);
   }
 
@@ -485,11 +500,114 @@
     $("sayInput").value = "";
   };
 
-  $("tabBtn").onclick = () => {
-    const on = document.body.classList.toggle("show-tr");
-    $("tabBtn").textContent = on ? "Document" : "Transcript";
-    if (on) $("sidePane").scrollTop = $("sidePane").scrollHeight;
+  // ---------------------------------------------------------------- side panel: research | transcript
+  function setTab(tab) {
+    st.tab = tab;
+    for (const b of document.querySelectorAll(".sidetabs [role=tab]")) b.setAttribute("aria-selected", String(b.dataset.tab === tab));
+    $("researchPane").hidden = tab !== "research";
+    $("transcriptPane").hidden = tab !== "transcript";
+    $("sidePane").scrollTop = tab === "transcript" ? $("sidePane").scrollHeight : 0;
+    seeResearch();
+  }
+  // Phone: one view at a time (document, research or transcript), picked from the bottom bar.
+  function setView(view) {
+    st.view = view;
+    document.body.classList.toggle("show-side", view !== "doc");
+    for (const b of document.querySelectorAll(".dock .tab")) b.classList.toggle("on", b.dataset.view === view);
+    if (view !== "doc") setTab(view); else seeResearch();
+  }
+  const researchVisible = () => document.visibilityState === "visible" && st.tab === "research" && (!narrow.matches || st.view === "research");
+  function seeResearch() {
+    if (researchVisible() && st.unseen.size) {
+      // Keep the outline on just-finished cards for a moment so you can spot them.
+      const ids = [...st.unseen]; st.unseen.clear(); renderBadge();
+      setTimeout(() => ids.forEach((id) => { const c = document.querySelector(`.rcard[data-id="${id}"]`); if (c) c.classList.remove("unseen"); }), 6000);
+    } else renderBadge();
+  }
+  function renderBadge() {
+    const n = st.unseen.size;
+    for (const id of ["resBadge", "resBadge2"]) { $(id).hidden = !n; $(id).textContent = n; }
+  }
+  document.querySelector(".sidetabs").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-tab]");
+    if (b) setTab(b.dataset.tab);
+  });
+  for (const b of document.querySelectorAll(".dock .tab")) b.onclick = () => setView(b.dataset.view);
+  narrow.addEventListener("change", () => setView(st.view));
+  document.addEventListener("visibilitychange", seeResearch);
+
+  const ORIGIN = { conversation: "Picked up by Claude", typed: "Typed here" };
+  function researchMeta(j) {
+    const when = fmtTime(j.created);
+    const how = `${ORIGIN[j.origin] || ""} · ${when}`;
+    if (j.state === "proposed") return `${how} · Not started`;
+    if (j.state === "queued") return `${how} · Waiting for a free slot`;
+    if (j.state === "running") return `Researching… ${Math.max(0, Math.round(Date.now() / 1000 - (j.started || j.created)))}s`;
+    if (j.state === "done") return `${how} · Found in ${j.took || 0}s`;
+    if (j.state === "cancelled") return `${how} · Cancelled`;
+    return `Couldn't finish: ${j.error || "unknown error"}`;
+  }
+  const safeUrl = (u) => (/^https?:\/\//i.test(u || "") ? u : "");
+  function researchCard(j) {
+    const li = document.createElement("li");
+    li.className = `rcard ${j.state}` + (st.unseen.has(j.id) ? " unseen" : "");
+    li.dataset.id = j.id;
+    let h = `<div class="rq" title="${esc(j.q)}">${esc(j.label || j.q)}</div><div class="rmeta">${esc(researchMeta(j))}</div>`;
+    if (j.state === "done") {
+      if (j.answer) h += `<p class="ranswer">${esc(j.answer)}</p>`;
+      if (j.items.length) {
+        h += '<ul class="ritems">';
+        j.items.forEach((it, i) => {
+          const u = safeUrl(it.url);
+          const t = u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(it.title)}</a>` : esc(it.title);
+          h += `<li class="${it.added ? "added" : ""}"><span class="t">${t}</span>` +
+            `<button type="button" class="quiet" data-ract="add" data-i="${i}" ${it.added ? "disabled" : ""}>${it.added ? "Added" : "Add"}</button>` +
+            (it.note ? `<span class="n">${esc(it.note)}</span>` : "") + "</li>";
+        });
+        h += "</ul>";
+      }
+    }
+    const acts = [];
+    if (j.state === "proposed") acts.push(["run", "Research this", true], ["dismiss", "Dismiss"]);
+    else if (j.state === "queued" || j.state === "running") acts.push(["cancel", "Cancel"]);
+    else if (j.state === "done") {
+      if (j.items.some((it) => !it.added)) acts.push(["addall", "Add all to document", true]);
+      acts.push(["dismiss", "Dismiss"]);
+    } else acts.push(["run", "Try again"], ["dismiss", "Dismiss"]);
+    h += '<div class="ractions">' + acts.map(([a, label, main]) => `<button type="button" class="${main ? "primary" : "quiet"}" data-ract="${a}">${label}</button>`).join("") + "</div>";
+    li.innerHTML = h;
+    return li;
+  }
+  function renderResearch() {
+    const ol = $("research");
+    ol.innerHTML = "";
+    [...st.research].reverse().forEach((j) => ol.appendChild(researchCard(j)));
+    $("resEmpty").hidden = st.research.length > 0;
+    seeResearch();
+  }
+  setInterval(() => {
+    for (const j of st.research) {
+      if (j.state !== "running") continue;
+      const m = document.querySelector(`.rcard[data-id="${j.id}"] .rmeta`);
+      if (m) m.textContent = researchMeta(j);
+    }
+  }, 1000);
+  $("research").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-ract]");
+    if (!b) return;
+    const id = +b.closest(".rcard").dataset.id, a = b.dataset.ract;
+    if (a === "add") { send({ type: "research_add", id, items: [+b.dataset.i] }); toast("Claude is adding that to the document."); }
+    else if (a === "addall") { send({ type: "research_add", id, items: null }); toast("Claude is adding these to the document."); }
+    else send({ type: `research_${a}`, id });
+  });
+  $("askForm").onsubmit = (e) => {
+    e.preventDefault();
+    const v = $("askInput").value.trim();
+    if (!v) return;
+    send({ type: "research_ask", q: v });
+    $("askInput").value = "";
   };
+  $("autoRes").onchange = () => send({ type: "research_auto", on: $("autoRes").checked });
 
   let toastTimer;
   function toast(text) {

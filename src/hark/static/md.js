@@ -11,6 +11,8 @@
     out = out.replace(/(^|[^\w])_([^_\n]+)_(?!\w)/g, "$1<em>$2</em>");
     out = out.replace(/~~([^~]+)~~/g, "<del>$1</del>");
     out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    // <https://…> autolinks, shown as the site's name to keep lines short
+    out = out.replace(/&lt;(https?:\/\/[^\s]+?)&gt;/g, (_, u) => `<a href="${u}" target="_blank" rel="noopener">${u.replace(/^https?:\/\/(www\.)?/, "").split("/")[0]}</a>`);
     return out;
   }
 
@@ -85,7 +87,8 @@
     const inl = (t) => t
       .replace(/\*\*([^*]+)\*\*/g, "*$1*")
       .replace(/`([^`]+)`/g, "$1")
-      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, "$1 ($2)");
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, "$1 ($2)")
+      .replace(/<(https?:\/\/[^>\s]+)>/g, "$1");
     const out = [];
     lines.forEach((l, i) => {
       const lv = level(l);

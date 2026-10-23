@@ -19,6 +19,7 @@ import numpy as np
 
 from .docops import apply_ops, changed_lines
 from .engine import SR, AudioStream, Engine
+from .research import Researcher
 from .scribe import Scribe, ScribeError, build_prompt
 from .session import Session, list_sessions
 
@@ -26,6 +27,7 @@ log = logging.getLogger("hark")
 SOURCES = {0: "mic", 1: "call", 2: "replay"}
 CONTEXT_LINES = 12
 ERROR_BACKOFF = 20
+MAX_RESEARCH = 2  # lookups running at once; more wait their turn
 
 
 class Client:
@@ -36,9 +38,13 @@ class Client:
 
 
 class Hub:
-    def __init__(self, engine: Engine, scribe: Scribe, data_dir: Path, threshold: float = 0.40):
+    def __init__(self, engine: Engine, scribe: Scribe, data_dir: Path, threshold: float = 0.40, researcher: Researcher | None = None):
         self.engine = engine
         self.scribe = scribe
+        self.researcher = researcher or Researcher(scribe)
+        self.research_queue: list[tuple[Session, dict]] = []
+        self.research_tasks: dict[tuple[str, int], asyncio.Task] = {}
+        self.promote: list[tuple[Session, str]] = []  # research findings waiting to go into the document
         self.data_dir = data_dir
         self.threshold = threshold
         self.session = Session(data_dir, threshold=threshold)
@@ -75,7 +81,8 @@ class Hub:
         listening = sorted({src for c in self.clients.values() for src in c.streams})
         return {"type": "status", "listening": listening, "backlog": round(self.engine.backlog, 1),
                 "claude": self.claude, "editing": self.editing, "pending": len(s.lines) - s.processed,
-                "model": self.scribe.model, "asr": self.engine.asr_name}
+                "model": self.scribe.model, "asr": self.engine.asr_name, "researching": len(self.research_tasks),
+                "research_ok": self.researcher.available}
 
     async def push_status(self) -> None:
         await self.broadcast(self.status())
@@ -213,15 +220,22 @@ class Hub:
         self.busy = True
         upto = len(s.lines)
         pending = s.lines[s.processed:upto]
+        adds = [t for (ss, t) in self.promote if ss is s]
+        self.promote = [(ss, t) for (ss, t) in self.promote if ss is not s]
+        requested = [j["q"] for j in s.research[-15:]]
         earlier = [s.fmt_line(l) for l in s.lines[max(0, s.processed - CONTEXT_LINES):s.processed] if l["kind"] == "speech"]
         new = [s.fmt_line(l) for l in pending if l["kind"] == "speech"]
         typed = [l["text"] for l in pending if l["kind"] == "typed"]
-        prompt = build_prompt(s.brief, s.doc, s.speaker_notes(), earlier, new, typed)
-        self.claude = {"state": "thinking", "detail": f"{len(pending)} new line{'s' * (len(pending) != 1)}"}
+        prompt = build_prompt(s.brief, s.doc, s.speaker_notes(), earlier, new, typed, adds, requested)
+        detail = f"{len(pending)} new line{'s' * (len(pending) != 1)}" if pending else ""
+        if adds:
+            detail = (detail + ", " if detail else "") + "adding research"
+        self.claude = {"state": "thinking", "detail": detail}
         await self.push_status()
         try:
             data, took = await self.scribe.edit(prompt)
         except ScribeError as e:
+            self.promote = [(s, t) for t in adds] + self.promote  # try again with the next update
             self.retry_at = time.time() + ERROR_BACKOFF
             self.claude = {"state": "error", "detail": str(e)}
             log.warning("claude: %s", e)
@@ -229,6 +243,7 @@ class Hub:
         finally:
             self.busy = False
             self.last_call = time.time()
+        await self._requested_research(s, data.get("research") or [])
         if s is not self.session:
             return  # session switched while Claude was thinking
         self.held = (s, upto, data, took)
@@ -273,6 +288,117 @@ class Hub:
         else:
             await self.push_status()
 
+    # -- background research ----------------------------------------------
+    async def push_research(self, s: Session, job: dict | None = None, removed: int | None = None) -> None:
+        if s is not self.session:
+            return
+        if removed is not None:
+            await self.broadcast({"type": "research_removed", "id": removed})
+        elif job is not None:
+            await self.broadcast({"type": "research", "job": job})
+        await self.push_status()
+
+    async def _requested_research(self, s: Session, reqs: list) -> None:
+        """Lookups the scribe heard someone ask for."""
+        known = {j["q"].strip().lower() for j in s.research}
+        for r in reqs[:3]:
+            q = str((r or {}).get("question") or "").strip()
+            if not q or q.lower() in known:
+                continue
+            known.add(q.lower())
+            job = s.add_research(q, "conversation", "queued" if s.research_auto else "proposed", str(r.get("label") or ""))
+            if job["state"] == "queued":
+                self.research_queue.append((s, job))
+            await self.push_research(s, job)
+        if reqs:
+            s.save()
+            self._pump_research()
+
+    def _pump_research(self) -> None:
+        while self.research_queue and len(self.research_tasks) < MAX_RESEARCH:
+            s, job = self.research_queue.pop(0)
+            if job["state"] != "queued":
+                continue
+            key = (s.id, job["id"])
+            task = asyncio.create_task(self._run_research(s, job))
+            self.research_tasks[key] = task
+            task.add_done_callback(lambda _t, k=key: (self.research_tasks.pop(k, None), self._pump_research()))
+
+    async def _run_research(self, s: Session, job: dict) -> None:
+        job.update(state="running", started=time.time(), error="")
+        await self.push_research(s, job)
+        try:
+            result, took = await self.researcher.run(job["q"], s.doc)
+            job.update(result, state="done", took=round(took))
+        except asyncio.CancelledError:
+            job.update(state="cancelled")
+        except ScribeError as e:
+            job.update(state="error", error=str(e))
+        except Exception as e:  # keep the hub alive whatever happens
+            log.exception("research failed")
+            job.update(state="error", error=str(e)[:200])
+        job["finished"] = time.time()
+        s.save()
+        self.research_tasks.pop((s.id, job["id"]), None)
+        await self.push_research(s, job)
+
+    def _queue_research(self, s: Session, job: dict) -> None:
+        job.update(state="queued", error="")
+        self.research_queue.append((s, job))
+        self._pump_research()
+
+    async def _research_msg(self, kind: str, msg: dict) -> None:
+        s = self.session
+        if kind == "research_ask":
+            q = (msg.get("q") or "").strip()
+            if q:
+                job = s.add_research(q, "typed", "queued")
+                await self.push_research(s, job)
+                self._queue_research(s, job)
+                s.save()
+            return
+        if kind == "research_auto":
+            s.research_auto = bool(msg.get("on"))
+            s.save()
+            await self.push_state()
+            return
+        job = s.research_job(msg.get("id"))
+        if not job:
+            return
+        if kind == "research_run" and job["state"] in ("proposed", "error", "cancelled"):
+            self._queue_research(s, job)
+            await self.push_research(s, job)
+        elif kind == "research_cancel":
+            task = self.research_tasks.get((s.id, job["id"]))
+            if task:
+                task.cancel()
+            elif job["state"] == "queued":
+                job.update(state="cancelled")
+                await self.push_research(s, job)
+        elif kind == "research_dismiss":
+            task = self.research_tasks.get((s.id, job["id"]))
+            if task:
+                task.cancel()
+            job["state"] = "dismissed"
+            s.research.remove(job)
+            await self.push_research(s, removed=job["id"])
+        elif kind == "research_add" and job["state"] == "done":
+            idx = msg.get("items")
+            picks = [it for i, it in enumerate(job["items"]) if (idx is None or i in idx) and not it.get("added")]
+            if not picks:
+                return
+            lines = [f"Request: {job['q']}"]
+            if idx is None and job.get("answer"):
+                lines.append(f"Answer: {job['answer']}")
+            for it in picks:
+                it["added"] = True
+                title = f"[{it['title']}]({it['url']})" if it.get("url") else it["title"]
+                lines.append(f"- {title}" + (f": {it['note']}" if it.get("note") else ""))
+            self.promote.append((s, "\n".join(lines)))
+            self.force = True
+            await self.push_research(s, job)
+        s.save()
+
     # -- messages from the page --------------------------------------------
     async def handle(self, ws, msg: dict) -> None:
         s = self.session
@@ -311,6 +437,8 @@ class Hub:
                 await self.broadcast({"type": "line", "line": s.public_line(line), "speakers": s.speakers.public()})
         elif kind == "update_now":
             self.force = True
+        elif isinstance(kind, str) and kind.startswith("research_"):
+            await self._research_msg(kind, msg)
         elif kind == "rename":
             s.speakers.rename(msg.get("id", ""), msg.get("name", ""))
             s.save()
