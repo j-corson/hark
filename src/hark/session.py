@@ -4,6 +4,8 @@ Saved as plain files in a folder per session:
   doc.md          the document
   transcript.md   who said what, when
   session.json    everything needed to reopen it
+  versions.jsonl  every version of the document, one per line, so a lost or
+                  ruined document can be recovered and Undo survives reopening
 """
 
 from __future__ import annotations
@@ -44,6 +46,8 @@ class Session:
         self.doc = MODES[mode]["template"]
         self.version = 0
         self.history: list[str] = []
+        self._log: list[dict] = []  # document versions not yet appended to versions.jsonl
+        self._log_started = False
         self.lines: list[dict] = []
         self.processed = 0  # lines[:processed] are reflected in the document
         self.speakers = Speakers(threshold)
@@ -67,14 +71,21 @@ class Session:
         return not self.lines and not self.research and self.doc.strip() == MODES[self.mode]["template"].strip()
 
     # -- mutations ----------------------------------------------------------
-    def set_doc(self, markdown: str) -> bool:
+    def _record(self, by: str) -> None:
+        self._log.append({"v": self.version, "t": round(time.time(), 1), "by": by, "doc": self.doc})
+
+    def set_doc(self, markdown: str, by: str = "you") -> bool:
         markdown = tidy(markdown)
         if markdown == self.doc:
             return False
+        if not self._log_started:
+            self._record("start")  # the version this log starts from, so Undo can reach it after reopening
+            self._log_started = True
         self.history.append(self.doc)
         del self.history[:-HISTORY]
         self.doc = markdown
         self.version += 1
+        self._record(by)
         return True
 
     def undo(self) -> bool:
@@ -82,6 +93,7 @@ class Session:
             return False
         self.doc = self.history.pop()
         self.version += 1
+        self._record("undo")
         return True
 
     def add_line(self, t: float, source: str, speaker: str, text: str, kind: str = "speech") -> dict:
@@ -156,6 +168,10 @@ class Session:
             "research": self.research, "research_auto": self.research_auto, "next_research": self._next_research,
         }
         _atomic_write(self.dir / "session.json", json.dumps(state))
+        if self._log:
+            with open(self.dir / "versions.jsonl", "a", encoding="utf-8") as f:
+                f.write("".join(json.dumps(e) + "\n" for e in self._log))
+            self._log = []
 
     @classmethod
     def load(cls, root: Path, sid: str, threshold: float = 0.40) -> "Session":
@@ -167,6 +183,13 @@ class Session:
         s.interval = d.get("interval", s.interval)
         s.doc = d["doc"]
         s.history = d.get("history", [])
+        replayed = replay_versions(root / sid / "versions.jsonl")
+        if replayed is not None:
+            s._log_started = True
+            doc, hist = replayed
+            # Only trust the log if it ends where the saved document does.
+            if doc == s.doc and len(hist) >= len(s.history):
+                s.history = hist
         s.lines = d.get("lines", [])
         s.processed = d.get("processed", len(s.lines))
         s._next_line = d.get("next_line", len(s.lines) + 1)
@@ -191,6 +214,39 @@ def research_markdown(title: str, jobs: list[dict]) -> str:
             out.append(f"- **{it['title']}**{link}" + (f": {it['note']}" if it.get("note") else ""))
         out.append("")
     return "\n".join(out)
+
+
+def read_versions(path: Path) -> list[dict]:
+    """Every saved version of a document, oldest first. Skips a half-written last line."""
+    out = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def replay_versions(path: Path) -> tuple[str, list[str]] | None:
+    """Rebuild (current document, undo history) from versions.jsonl, or None if there is no log."""
+    entries = read_versions(path)
+    if not entries:
+        return None
+    doc: str | None = None
+    hist: list[str] = []
+    for e in entries:
+        if e.get("by") == "undo":
+            if hist:
+                hist.pop()
+        elif doc is not None:
+            hist.append(doc)
+            del hist[:-HISTORY]
+        doc = e["doc"]
+    return doc, hist
 
 
 def list_sessions(root: Path, limit: int = 30) -> list[dict]:

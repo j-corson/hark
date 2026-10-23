@@ -82,6 +82,17 @@ Each session is a folder in `~/Documents/Hark/` (change it with `--data-dir`):
 - `doc.md`: the document
 - `transcript.md`: who said what, and when
 - `session.json`: everything needed to reopen it
+- `versions.jsonl`: every version of the document, one per line, labelled with who made it (you, Claude or Undo). Undo uses it, so it works after reopening a session, and it's there if a document ever gets lost or mangled.
+
+### Rebuilding a document from a transcript
+
+If a document is lost or ruined, you can build a fresh one from a transcript:
+
+```sh
+hark --rebuild meeting.vtt
+```
+
+This reads a Teams transcript (in Teams, open the meeting recap, then download the transcript as .vtt) or hark's own `transcript.md`, and has Claude write the document from it in a few large steps. A one-hour meeting takes a few minutes. The result is a new session, so nothing is overwritten; open it with **More → Open a previous session**. Use `--mode` to pick meeting, co-writing or notes. Hand edits aren't in any transcript, so they won't come back; use the versions file for those.
 
 Use **More → Open a previous session** to pick one up again, or **More → New session** to start fresh. Audio is never saved.
 
@@ -97,6 +108,7 @@ To send the document to someone, use **More → Share…**, which opens your pho
 | `--asr parakeet\|moonshine` | Speech model. Parakeet (default) is accurate, adds punctuation and handles 25 European languages. Moonshine is English-only, smaller and faster, for older laptops. |
 | `--lan` | Also serve over HTTPS on your network, for your phone. |
 | `--replay file.m4a` | Feed a recording through as if it were live. Useful for old recordings or for trying hark out. Needs ffmpeg for formats other than WAV. |
+| `--rebuild file.vtt` | Build a new session from a Teams transcript or a hark `transcript.md`, then exit. |
 | `--port 8765` | Local port. The phone port is this plus one. |
 
 **More → Instructions for Claude** shows the brief Claude follows for the current session. You can rewrite it, for example "this is a supervision meeting; track the student's next steps", and set how often Claude updates. The defaults are every 20 seconds for meetings and every 5 seconds for co-writing.

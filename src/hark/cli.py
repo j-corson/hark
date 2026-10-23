@@ -142,6 +142,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--data-dir", type=Path, default=default_data_dir(), help="where sessions are saved (default ~/Documents/Hark)")
     p.add_argument("--replay", metavar="AUDIO", help="feed an audio file through as if it were live (for testing or old recordings)")
     p.add_argument("--speed", type=float, default=1.0, help="replay speed multiplier")
+    p.add_argument("--rebuild", metavar="TRANSCRIPT", type=Path,
+                   help="build a new session from a Teams .vtt transcript or hark's transcript.md (uses --mode), then exit")
     p.add_argument("--no-browser", action="store_true")
     p.add_argument("--check", action="store_true", help="check the Claude login and download models, then exit")
     p.add_argument("--version", action="version", version=f"hark {__version__}")
@@ -152,6 +154,18 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.check:
         check(args)
+        return
+    if args.rebuild:
+        from .rebuild import rebuild
+        from .scribe import Scribe
+
+        if not args.rebuild.is_file():
+            raise SystemExit(f"No such file: {args.rebuild}")
+        scribe = Scribe(args.model, args.effort)
+        if not scribe.available:
+            raise SystemExit("Claude Code CLI not found. Install it and run `claude` once to log in.")
+        args.data_dir.mkdir(parents=True, exist_ok=True)
+        asyncio.run(rebuild(args.rebuild, args.data_dir, args.mode, scribe))
         return
     print("hark: loading speech models (first run downloads them) ...", file=sys.stderr, flush=True)
     from .engine import Engine

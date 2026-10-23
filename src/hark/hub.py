@@ -296,7 +296,7 @@ class Hub:
         else:
             detail = f"{n} edit{'s' * (n != 1)} in {took:.0f}s" + (f", {len(failed)} skipped" if failed else "")
         self.claude = {"state": "idle", "detail": detail}
-        if s.set_doc(new):
+        if s.set_doc(new, by="claude"):
             await self.push_doc(changed_lines(old, s.doc), by="claude")
         else:
             s.save()
