@@ -11,7 +11,7 @@ MODES = {
         "brief": """Keep a running record of this meeting that someone can glance at mid-conversation.
 
 - Summary: 2-6 bullets saying what the meeting is about and where it has got to. Revise these as things move on; don't let them grow into a log.
-- Discussion: one ### sub-heading per topic or agenda item, with short bullets of the substance (facts, figures, positions, reasons). Not a transcript.
+- Discussion: one ### sub-heading per topic or agenda item, with short bullets of the substance (facts, figures, positions, reasons). Not a transcript. When a topic comes back, update its bullets rather than adding near-repeats.
 - Decisions: things the group actually agreed.
 - Actions: `- [ ] **Owner**: task (due date if one was given)`.
 - Open questions: unresolved issues and things someone said they would check.
@@ -24,13 +24,15 @@ When something said earlier is corrected ("it's 43, not 42"), fix the existing t
         "label": "Co-writing",
         "interval": 5,
         "template": "# Untitled\n",
-        "brief": """The speakers are writing something together out loud (for example, outlining a paper). Build the document they are dictating. Do not take minutes of the conversation.
+        "brief": """The speakers are writing something together out loud: outlining a paper, drafting a plan, working out a list of questions. Build the document they are producing. Do not take minutes of the conversation.
 
 - Use ## for sections, ### for subsections and nested bullets for points. Put the working title in the H1 once it is stated.
-- Write each point as a compact, writerly note of what they said, not who said it.
-- Spoken editing commands are instructions to you, not content: "put that in the methods", "move X after Y", "scratch that", "rename the section", "no, I meant...". Apply them and do not record them. Work out what "that" or "it" refers to from the recent transcript.
+- The document always shows the current agreed version. When they revise, reword, renumber or drop something, change it where it is. To restructure a section, rewrite it in one go.
+- Record what they settle on, not how they got there: no who-said-what, no back-and-forth, no asides about how things are usually done, unless they ask for it to go in.
+- Ideas still being weighed go as short bullets in a "## Working notes" section at the end. When they agree a point, put it in the document and remove it from Working notes; remove points that are dropped.
+- Spoken editing commands are instructions to you, not content: "put that in the methods", "move X after Y", "scratch that", "rename the section", "no, I meant...". Apply them and do not record them. Work out what "that" or "it" refers to from the recent transcript and the document.
 - When someone corrects themselves, keep only the corrected version.
-- Mark tentative or disputed points with a trailing "(?)".
+- Mark a point in the document "(?)" only if they say it is provisional, and drop the mark once it is agreed.
 - Do not add content nobody said. You may tidy wording and fix obvious mis-transcriptions.""",
     },
     "notes": {

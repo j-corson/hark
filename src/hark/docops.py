@@ -1,7 +1,7 @@
 """Apply Claude's edit operations to a Markdown document.
 
-Claude never rewrites the whole document. It returns small anchored edits
-("replace this text", "append under this heading"). They are applied to the
+Claude's live updates are small anchored edits ("replace this text", "append
+under this heading", "rewrite this section"). They are applied to the
 document as it is *now*, so a hand edit made while Claude was thinking survives:
 an edit whose anchor has gone is simply skipped.
 """
@@ -79,11 +79,53 @@ def _replace_text(doc: str, find: str, text: str) -> str | None:
     return "\n".join(lines[:a] + repl + lines[b:])
 
 
+WORKING_NOTES = "working notes"
+
+
+def _add_section(doc: str, block: str) -> str:
+    """Add a new section at the end, but above "## Working notes", which stays last."""
+    lines = doc.rstrip("\n").split("\n")
+    at = next((i for i, l in enumerate(lines) if _heading_key(l) == WORKING_NOTES), len(lines))
+    new = block.strip("\n").split("\n")
+    return "\n".join(lines[:at] + [""] + new + [""] + lines[at:]) + "\n"
+
+
+def _section_span(lines: list[str], heading: str) -> tuple[int, int] | None:
+    """(start, end) of the section under `heading`, subsections included."""
+    key = _heading_key(heading) if HEADING.match(heading) else _norm(heading)
+    idx = next((i for i, l in enumerate(lines) if _heading_key(l) == key), None)
+    return None if idx is None else (idx, _section_end(lines, idx))
+
+
+def section_text(doc: str, heading: str) -> str | None:
+    lines = doc.split("\n")
+    span = _section_span(lines, heading)
+    return None if span is None else "\n".join(lines[span[0]:span[1]]).strip()
+
+
 def apply_op(doc: str, op: dict) -> str | None:
     """Apply one op. Returns the new document, or None if it could not apply."""
     kind = op.get("op")
     find = op.get("find") or ""
     text = op.get("text") or ""
+    if kind == "replace_section":
+        heading = (op.get("heading") or "").strip()
+        if not heading:
+            return None
+        lines = doc.split("\n")
+        span = _section_span(lines, heading)
+        new = text.strip("\n").split("\n") if text.strip() else []
+        if new and not HEADING.match(new[0].strip()):
+            # Body only: keep the existing heading line.
+            new = [lines[span[0]] if span else (heading if HEADING.match(heading) else f"## {heading}")] + new
+        if span is None:
+            return _add_section(doc, "\n".join(new)) if new else None
+        a, b = span
+        if len(HEADING.match(lines[a].strip()).group(1)) == 1:
+            return None  # the title's "section" is the whole document; that's a tidy, not an edit
+        if new and b < len(lines):
+            new = new + [""]
+        return "\n".join(lines[:a] + new + lines[b:])
     if kind == "replace":
         if not find:
             return None
@@ -106,8 +148,7 @@ def apply_op(doc: str, op: dict) -> str | None:
         if idx is None:
             # Section does not exist yet: create it at the end.
             h = heading if HEADING.match(heading) else f"## {heading}"
-            body = doc.rstrip("\n")
-            return f"{body}\n\n{h}\n{text.strip(chr(10))}\n"
+            return _add_section(doc, f"{h}\n{text.strip(chr(10))}")
         end = _section_end(lines, idx)
         at = end
         while at - 1 > idx and not lines[at - 1].strip():
@@ -127,16 +168,31 @@ def tidy(doc: str) -> str:
     return doc.strip("\n") + "\n"
 
 
-def apply_ops(doc: str, ops: list[dict]) -> tuple[str, list[dict]]:
-    """Apply ops in order. Returns (new_doc, ops_that_failed)."""
+def apply_ops(doc: str, ops: list[dict], base: str | None = None) -> tuple[str, list[dict]]:
+    """Apply ops in order. Returns (new_doc, ops_that_failed).
+
+    `base` is the document Claude was shown. If someone edited a section by hand
+    since then, a whole-section rewrite of it is skipped so their edit survives."""
     failed = []
+    start = doc
     for op in ops:
+        if (op.get("op") == "replace_section" and base is not None and base != start
+                and section_text(base, op.get("heading") or "") != section_text(start, op.get("heading") or "")):
+            failed.append(op)
+            continue
         new = apply_op(doc, op)
         if new is None:
             failed.append(op)
         else:
             doc = new
     return tidy(doc), failed
+
+
+def rename_in_doc(doc: str, old: str, new: str) -> str:
+    """Swap a person's old name or label for the new one, as whole words only."""
+    if not old.strip() or not new.strip() or old == new:
+        return doc
+    return re.sub(rf"(?<!\w){re.escape(old)}(?!\w)", new, doc)
 
 
 def changed_lines(old: str, new: str) -> list[int]:

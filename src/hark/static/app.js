@@ -9,7 +9,7 @@
     ws: null, session: null, status: {}, doc: "", version: 0, lines: [], speakers: {}, sessions: [],
     modes: {}, fresh: new Map(), editing: null, rawOpen: false, pendingRender: false,
     caps: {}, ctx: null, workletReady: null, wake: null, lastUserScroll: 0,
-    research: [], unseen: new Set(), tab: "research", view: "doc",
+    research: [], unseen: new Set(), tab: "research", view: "doc", notesOpen: false,
   };
   const narrow = window.matchMedia("(max-width: 820px)");
 
@@ -95,11 +95,26 @@
     const el = $("doc");
     el.innerHTML = "";
     let firstFresh = null;
+    // "## Working notes" holds ideas still being discussed. It stays folded unless opened.
+    const wn = bl.findIndex((b) => b.kind === "h" && b.level === 2 && /^#+\s*working notes\s*#*$/i.test(lines[b.start].trim()));
+    let wnEnd = bl.length;
+    if (wn >= 0) for (let k = wn + 1; k < bl.length; k++) if (bl[k].kind === "h" && bl[k].level <= 2) { wnEnd = k; break; }
     bl.forEach((b, idx) => {
+      const inNotes = wn >= 0 && idx > wn && idx < wnEnd;
+      if (inNotes && !st.notesOpen) return;
       const tmp = document.createElement("div");
       tmp.innerHTML = b.html;
       const node = tmp.firstElementChild;
       node.dataset.start = b.start; node.dataset.end = b.end;
+      if (inNotes) node.classList.add("wn");
+      if (idx === wn && wnEnd > wn + 1) {
+        const n = bl.slice(wn + 1, wnEnd).filter((x) => x.kind === "li").length;
+        const tg = document.createElement("button");
+        tg.type = "button"; tg.className = "quiet wntoggle";
+        tg.textContent = st.notesOpen ? "Hide" : `Show ${n || ""}`.trim();
+        tg.setAttribute("aria-expanded", st.notesOpen ? "true" : "false");
+        node.appendChild(tg);
+      }
       const age = freshAge(b.start, b.end, lines);
       if (age !== null) {
         node.classList.add("fresh");
@@ -132,6 +147,7 @@
 
   $("doc").addEventListener("click", (e) => {
     if (e.target.closest("a")) return;
+    if (e.target.closest(".wntoggle")) { st.notesOpen = !st.notesOpen; renderDoc(false); return; }
     const box = e.target.closest("input[type=checkbox]");
     const blk = e.target.closest("[data-start]");
     if (!blk || st.editing) return;
@@ -280,7 +296,9 @@
     $("startBtn").classList.toggle("on", listening);
     $("startBtn").textContent = listening ? "Stop" : "Start listening";
     let text = "", cls = "";
+    $("tidyBtn").disabled = c.state === "tidying";
     if (c.state === "thinking") { text = `Claude is updating the document (${c.detail})`; cls = "thinking"; }
+    else if (c.state === "tidying") { text = "Claude is tidying up the document…"; cls = "thinking"; }
     else if (s.editing) { text = "Claude waits while you edit"; cls = "paused"; }
     else if (c.state === "error") { text = `Claude couldn't update: ${c.detail}`; cls = "error"; }
     else if (listening) text = s.pending ? `Listening. ${s.pending} new line${s.pending === 1 ? "" : "s"} for the next update.` : (c.detail ? `Listening. Last update: ${c.detail}.` : "Listening.");
@@ -419,6 +437,7 @@
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") hidePopovers(); });
   $("menuBtn").onclick = (e) => { e.stopPropagation(); togglePopover("moreMenu"); };
   $("undoBtn").onclick = () => send({ type: "undo" });
+  $("tidyBtn").onclick = () => send({ type: "tidy" });
 
   $("moreMenu").addEventListener("click", async (e) => {
     const b = e.target.closest("[data-act]");

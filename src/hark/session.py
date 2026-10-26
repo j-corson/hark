@@ -55,6 +55,7 @@ class Session:
         self.research: list[dict] = []  # background lookups, newest last
         self.research_auto = True  # start lookups people ask for out loud without asking first
         self._next_research = 1
+        self.done: list[str] = []  # Claude's recent "what I did" notes, so it doesn't redo an instruction
 
     # -- paths / naming -----------------------------------------------------
     @property

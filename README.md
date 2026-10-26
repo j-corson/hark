@@ -3,7 +3,7 @@
 hark listens to a conversation and keeps a live, structured document you can glance at while you talk. That could be a Teams call, people around a table, or two of you outlining a paper out loud.
 
 - **Meeting** mode keeps a running summary, decisions, actions and open questions.
-- **Co-writing** mode builds the document you're dictating. Spoken edits like "no, that goes in the methods" or "move the policy bit into its own section" are applied to the document instead of being written down.
+- **Co-writing** mode builds the document you're dictating or working out together, such as a paper outline or a list of interview questions. It keeps only what you settle on. Ideas still being discussed go in a folded **Working notes** section at the end. Spoken edits like "no, that goes in the methods" or "move the policy bit into its own section" are applied to the document instead of being written down.
 - **Notes** mode groups the content by topic.
 
 It tells speakers apart by voice. You can edit any line by hand at any time, and Claude works around your edits rather than overwriting them. Speech recognition runs on your machine. Document updates go through **your Claude subscription** via the Claude Code CLI, so no API key is needed.
@@ -51,6 +51,8 @@ The link includes a private key, and only browsers that have opened it can conne
 - **More → Edit as text** gives you the whole document as Markdown.
 - **Undo** reverts the last change, whether you made it or Claude did.
 - **Tell Claude** (the box at the bottom) takes typed instructions, such as "make Actions a table" or "merge the two budget points". These are sent straight away.
+- **Say "Claude, …"** to give an instruction out loud, for example "Claude, swap questions four and five". hark updates as soon as you finish the sentence instead of waiting for the next update, and confirms what it did ("✓ Swapped Q4 and Q5").
+- **Tidy** has Claude go over the whole document: it keeps only the latest version of anything that was revised, merges repeats and moves things where they belong. You can also say "Claude, tidy this up". In co-writing, hark tidies by itself when you press Stop. A tidy takes 20–60 seconds, and **Undo** puts the previous version back.
 - While you're editing, Claude waits. Its next update applies small anchored changes to the document as it now stands, so your wording isn't reverted.
 - Text Claude has just added or changed is highlighted for about 25 seconds.
 
@@ -71,7 +73,8 @@ One lookup uses noticeably more of your plan than a document update: roughly as 
 
 Voices are grouped automatically as Speaker 1, Speaker 2 and so on. Claude may fill in real names when it's obvious, for example when someone introduces themselves.
 
-- Click a name chip above the transcript to rename that speaker. **Giving two speakers the same name merges them.**
+- Click a name chip above the transcript to rename that speaker. The old label or spelling is replaced in the document too. **Giving two speakers the same name merges them.**
+- If someone spells their name out ("Clare, without an i"), Claude corrects it.
 - Click the name on a single transcript line to reassign just that line.
 - If different people keep getting merged, raise `--speaker-threshold` (default 0.40). If one person keeps getting split, lower it.
 

@@ -7,9 +7,11 @@ capturing a call and a phone you glance at).
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import logging
 import shutil
+import re
 import subprocess
 import time
 import wave
@@ -17,10 +19,10 @@ from pathlib import Path
 
 import numpy as np
 
-from .docops import apply_ops, changed_lines
+from .docops import apply_ops, changed_lines, rename_in_doc
 from .engine import SR, AudioStream, Engine
 from .research import Researcher, clean, clean_url
-from .scribe import Scribe, ScribeError, build_prompt
+from .scribe import Scribe, ScribeError, build_prompt, build_tidy_prompt
 from .session import Session, list_sessions
 
 log = logging.getLogger("hark")
@@ -28,6 +30,18 @@ SOURCES = {0: "mic", 1: "call", 2: "replay"}
 CONTEXT_LINES = 12
 ERROR_BACKOFF = 20
 MAX_RESEARCH = 2  # lookups running at once; more wait their turn
+WAKE = re.compile(r"\b(claude|clawed|claud)\b", re.I)  # speech addressed to Claude skips the wait
+WAKE_PAUSE = 1.2  # ...once the sentence is finished
+WAKE_WAIT = 4.0  # ...or after this long a pause, punctuation or not
+SENTENCE_END = re.compile(r"[.?!][\"')\]]*\s*$")
+DONE_KEPT = 6  # how many of Claude's recent "what I did" notes it is reminded of
+TIDY_MIN_LINES = 12  # don't bother tidying a document shorter than this on Stop
+
+
+def respelling(old: str, new: str) -> bool:
+    """True if `new` looks like the same name spelled differently (Claire → Clare), not a different person."""
+    a, b = old.strip().lower(), new.strip().lower()
+    return bool(a and b) and a != b and difflib.SequenceMatcher(None, a, b).ratio() >= 0.7
 
 
 def research_findings(s: Session, jobs: int = 8) -> list[str]:
@@ -68,6 +82,10 @@ class Hub:
         self.busy = False
         self.force = False
         self.held: tuple | None = None  # Claude result that arrived while someone was editing
+        self.tidy_wanted: str | None = None  # "asked", or "stop" when listening stopped in co-writing
+        self.tidy_at = 0.0  # earliest time a "stop" tidy may start
+        self.held_tidy: tuple | None = None  # tidied document waiting for someone to finish editing
+        self.tidied: tuple[str, int] | None = None  # (session id, version) right after the last tidy
         self.last_call = 0.0
         self.retry_at = 0.0
         self.claude = {"state": "idle", "detail": "" if scribe.available else "Claude CLI not found"}
@@ -179,6 +197,8 @@ class Hub:
         st = c.streams.pop(source, None) if c else None
         if st:
             await self._segments(st, st.flush())
+            if self.session.mode == "outline" and not self.listening and not self.tidy_wanted:
+                self.tidy_wanted, self.tidy_at = "stop", time.time() + 3
         await self.push_status()
 
     async def replay(self, path: str, speed: float = 1.0) -> None:
@@ -210,12 +230,14 @@ class Hub:
             try:
                 if self._due():
                     await self._update()
+                elif self._tidy_due():
+                    await self._tidy()
             except Exception:  # keep the loop alive whatever happens
                 log.exception("update failed")
 
     def _due(self) -> bool:
         s = self.session
-        if self.busy or self.editing or self.held or not self.scribe.available:
+        if self.busy or self.editing or self.held or self.held_tidy or not self.scribe.available:
             return False
         pending = s.lines[s.processed:]
         if not pending and not self.force:
@@ -225,8 +247,11 @@ class Hub:
             return False
         if self.force or any(l["kind"] == "typed" for l in pending):
             return True
-        since = now - self.last_call
         pause = now - pending[-1]["added"]
+        finished = SENTENCE_END.search(pending[-1]["text"]) and pause >= WAKE_PAUSE
+        if (finished or pause >= WAKE_WAIT) and any(WAKE.search(l["text"]) for l in pending):
+            return True  # someone spoke to Claude: act on it now, not at the next interval
+        since = now - self.last_call
         chars = sum(len(l["text"]) for l in pending)
         return since >= s.interval and (pause >= min(2.5, s.interval / 2) or chars >= 400)
 
@@ -243,7 +268,8 @@ class Hub:
         earlier = [s.fmt_line(l) for l in s.lines[max(0, s.processed - CONTEXT_LINES):s.processed] if l["kind"] == "speech"]
         new = [s.fmt_line(l) for l in pending if l["kind"] == "speech"]
         typed = [l["text"] for l in pending if l["kind"] == "typed"]
-        prompt = build_prompt(s.brief, s.doc, s.speaker_notes(), earlier, new, typed, adds, requested, findings)
+        base = s.doc
+        prompt = build_prompt(s.brief, base, s.speaker_notes(), earlier, new, typed, adds, requested, findings, s.done[-DONE_KEPT:])
         detail = f"{len(pending)} new line{'s' * (len(pending) != 1)}" if pending else ""
         if adds:
             detail = (detail + ", " if detail else "") + "adding research"
@@ -263,36 +289,115 @@ class Hub:
         await self._requested_research(s, data.get("research") or [])
         if s is not self.session:
             return  # session switched while Claude was thinking
-        self.held = (s, upto, data, took)
+        if data.get("tidy"):
+            self.tidy_wanted = "asked"
+        self.held = (s, upto, data, took, base)
         await self._maybe_release_held()
 
+    # -- tidying up ---------------------------------------------------------
+    @property
+    def listening(self) -> bool:
+        return any(c.streams for c in self.clients.values())
+
+    def _tidy_due(self) -> bool:
+        if not self.tidy_wanted or self.busy or self.editing or self.held or self.held_tidy or not self.scribe.available:
+            return False
+        if self.tidy_wanted == "stop":
+            s = self.session
+            if self.listening:
+                self.tidy_wanted = None  # listening again: no tidy after all
+                return False
+            # Let the last things said reach the document first.
+            return time.time() >= self.tidy_at and s.processed >= len(s.lines) and self.engine.backlog < 0.5
+        return True
+
+    async def _tidy(self) -> None:
+        s = self.session
+        why, self.tidy_wanted = self.tidy_wanted, None
+        if self.tidied == (s.id, s.version):
+            if why == "asked":
+                await self.broadcast({"type": "toast", "text": "The document is already tidy."})
+            return
+        if why == "stop" and len([l for l in s.doc.split("\n") if l.strip()]) < TIDY_MIN_LINES:
+            return
+        self.busy = True
+        self.claude = {"state": "tidying", "detail": ""}
+        await self.push_status()
+        base = s.doc
+        try:
+            data, took = await self.scribe.rewrite(build_tidy_prompt(s.brief, base, s.speaker_notes()))
+        except ScribeError as e:
+            self.retry_at = time.time() + ERROR_BACKOFF
+            self.claude = {"state": "error", "detail": f"tidy failed: {e}"}
+            log.warning("tidy: %s", e)
+            await self.push_status()
+            return
+        finally:
+            self.busy = False
+            self.last_call = time.time()
+        doc = str(data.get("document") or "").strip()
+        if len(doc) < 0.25 * len(base.strip()) or not doc.startswith("#"):
+            self.claude = {"state": "error", "detail": "tidy came back incomplete, so the document was left as it was"}
+            await self.push_status()
+            return
+        self.held_tidy = (s, base, doc, str(data.get("summary") or "").strip()[:120], took)
+        await self._maybe_release_held()
+
+    async def _apply_tidy(self) -> None:
+        s, base, doc, summary, took = self.held_tidy
+        self.held_tidy = None
+        if s is not self.session:
+            return
+        self.claude = {"state": "idle", "detail": f"tidied in {took:.0f}s"}
+        if s.doc != base:
+            await self.broadcast({"type": "toast", "text": "The document changed while Claude was tidying, so it left it alone. Press Tidy to try again."})
+        elif s.set_doc(doc, by="tidy"):
+            self.tidied = (s.id, s.version)
+            await self.push_doc(by="tidy")
+            await self.broadcast({"type": "toast", "text": f"✓ Tidied{': ' + summary.rstrip('.') if summary else ''}. Undo puts it back."})
+        else:
+            self.tidied = (s.id, s.version)
+            await self.broadcast({"type": "toast", "text": "The document is already tidy."})
+        await self.push_status()
+
     async def _maybe_release_held(self) -> None:
-        if not self.held:
+        if self.held_tidy and not self.editing:
+            await self._apply_tidy()
+        if not (self.held or self.held_tidy):
             return
         if self.editing:
             self.claude = {"state": "paused", "detail": "waiting for you to finish editing"}
             await self.push_status()
             return
-        s, upto, data, took = self.held
+        if not self.held:
+            return
+        s, upto, data, took, base = self.held
         self.held = None
         if s is not self.session:
             return
-        ops = data.get("ops") or []
+        ops = [o for o in (data.get("ops") or []) if isinstance(o, dict)]
         old = s.doc
-        new, failed = apply_ops(old, ops)
+        new, failed = apply_ops(old, ops, base)
         s.processed = max(s.processed, upto)
         renamed = False
         for label, name in (data.get("speaker_names") or {}).items():
+            label, name = str(label).strip(), str(name).strip()
             for sid, sp in list(s.speakers.items.items()):
-                if sp["auto"] and sp["name"].lower() == str(label).lower() and name.strip():
+                if name and sp["name"].lower() == label.lower() and (sp["auto"] or respelling(sp["name"], name)):
+                    was = sp["name"]
                     s.speakers.rename(sid, name)
+                    new = rename_in_doc(new, was, s.speakers.name(sid))
                     renamed = True
         n = len(ops) - len(failed)
         if failed:
             log.info("skipped %d edit(s) whose anchors were not found: %s", len(failed), failed)
-        if not ops:
-            hint = " (Co-writing only records what you dictate; use Meeting or Notes for a conversation)" if s.mode == "outline" else ""
-            detail = f"nothing new to add{hint}"
+        ack = str(data.get("ack") or "").strip()[:140]
+        if ack:
+            s.done = (s.done + [f"[{time.strftime('%H:%M:%S')}] {ack}"])[-DONE_KEPT:]
+            detail = f"{ack} ({took:.0f}s)"
+            await self.broadcast({"type": "toast", "text": f"✓ {ack}"})
+        elif not ops:
+            detail = "nothing new to add"
         else:
             detail = f"{n} edit{'s' * (n != 1)} in {took:.0f}s" + (f", {len(failed)} skipped" if failed else "")
         self.claude = {"state": "idle", "detail": detail}
@@ -471,10 +576,17 @@ class Hub:
                 await self.broadcast({"type": "line", "line": s.public_line(line), "speakers": s.speakers.public()})
         elif kind == "update_now":
             self.force = True
+        elif kind == "tidy":
+            self.tidy_wanted = "asked"
+            if self.busy:
+                await self.send(ws, {"type": "toast", "text": "Claude will tidy up as soon as this update is done."})
         elif isinstance(kind, str) and kind.startswith("research_"):
             await self._research_msg(kind, msg)
         elif kind == "rename":
-            s.speakers.rename(msg.get("id", ""), msg.get("name", ""))
+            was = s.speakers.name(msg.get("id", ""))
+            sid = s.speakers.rename(msg.get("id", ""), msg.get("name", ""))
+            # The person's old label or spelling goes from the document too.
+            s.set_doc(rename_in_doc(s.doc, was, s.speakers.name(sid)))
             s.save()
             await self.push_state()
         elif kind == "reassign":
@@ -500,6 +612,7 @@ class Hub:
             s.save()
             self.session = Session(self.data_dir, mode=msg.get("mode") or s.mode, threshold=self.threshold)
             self.held = None
+            self.held_tidy, self.tidy_wanted = None, None
             await self.push_state()
         elif kind == "open_session":
             sid = msg.get("id", "")
@@ -507,6 +620,7 @@ class Hub:
                 s.save()
                 self.session = Session.load(self.data_dir, sid, self.threshold)
                 self.held = None
+                self.held_tidy, self.tidy_wanted = None, None
                 await self.push_state()
 
     async def _edit_lines(self, ws, msg: dict) -> None:
