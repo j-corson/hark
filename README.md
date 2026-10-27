@@ -7,18 +7,18 @@ hark listens to a conversation and keeps a live, structured document you can gla
 - **Grilling** mode turns a list of ideas into specs that are clear enough to hand to an agent or a colleague. Claude keeps a few questions open on the item you're discussing, each with a suggested answer, and fills in the spec as you answer them.
 - **Notes** mode groups the content by topic.
 
-It tells speakers apart by voice. You can edit any line by hand at any time, and Claude works around your edits rather than overwriting them. Speech recognition runs on your machine. Document updates go through **your Claude subscription** via the Claude Code CLI, so no API key is needed.
+It tells speakers apart by voice. You can edit any line by hand at any time, and Claude works around your edits rather than overwriting them. Speech recognition runs on your machine. Document updates go through **your Claude subscription** via the Claude Code CLI by default, so no API key is needed. You can use an Anthropic API key instead, or any service with an OpenAI-compatible API (OpenAI, Gemini, OpenRouter, a local Ollama and so on): see [Choosing the AI service](#choosing-the-ai-service).
 
 ## Set up (once)
 
-You need [uv](https://docs.astral.sh/uv/) and [Claude Code](https://claude.com/claude-code), logged in with your Claude account (run `claude` once and sign in).
+You need [uv](https://docs.astral.sh/uv/). To use your Claude subscription (the default), you also need [Claude Code](https://claude.com/claude-code), logged in with your Claude account (run `claude` once and sign in).
 
 ```sh
 uv tool install git+https://github.com/mikefsway/hark
-hark --check
+hark --setup
 ```
 
-`--check` downloads the speech models (about 520 MB, once) and makes one tiny Claude call to confirm your login works.
+`--setup` asks which AI service to use (your Claude subscription, an Anthropic API key, or another provider's API) and saves your answer. It then downloads the speech models (about 520 MB, once) and makes one tiny call to confirm everything works. To check again later, run `hark --check`.
 
 To update later: `uv tool upgrade hark`. To work on the code instead: `git clone`, then `uv run hark` inside the repo.
 
@@ -141,7 +141,10 @@ To send the document to someone, use **More → Share…**, which opens your pho
 |---|---|
 | `--mode meeting\|outline\|grill\|notes` | Starting mode. You can also switch in the app; while a document is still empty, switching changes its template. |
 | `--agenda file.md` | Start from an agenda (see [Starting from an agenda](#starting-from-an-agenda)). |
-| `--model sonnet` | Claude model for updates. `haiku` is lighter on usage, and `opus` is the most careful. |
+| `--setup` | Choose the AI service and save it (see [Choosing the AI service](#choosing-the-ai-service)). |
+| `--provider claude-code\|anthropic\|openai` | Use a different service for this run. |
+| `--model sonnet` | Model for updates. With Claude, `haiku` is lighter on usage and `opus` is the most careful. With an OpenAI-compatible service, use the name it lists. |
+| `--base-url URL` | The API address, for `--provider openai`. |
 | `--research-model opus` | Claude model for research lookups. The default is the same as `--model`. |
 | `--asr parakeet\|moonshine` | Speech model. Parakeet (default) is accurate, adds punctuation and handles 25 European languages. Moonshine is English-only, smaller and faster, for older laptops. |
 | `--lan` | Also serve over HTTPS on your network, for your phone. |
@@ -151,15 +154,29 @@ To send the document to someone, use **More → Share…**, which opens your pho
 
 **More → Instructions for Claude** shows the brief Claude follows for the current session. You can rewrite it, for example "this is a supervision meeting; track the student's next steps", and set how often Claude updates. The defaults are every 20 seconds for meetings and every 5 seconds for co-writing.
 
-## How it uses your Claude subscription
+## Choosing the AI service
 
-Each update runs `claude -p` (headless Claude Code) once. It sends the brief, the current document and the new transcript lines, and gets back a short list of edits. The call runs with `--safe-mode`, which skips your CLAUDE.md, MCP servers, plugins and hooks. It has no tools, and it isn't saved to your `/resume` history. hark removes `ANTHROPIC_API_KEY` from the call's environment so that usage counts against your subscription rather than API billing.
+Run `hark --setup` to choose, or to change your choice later. It saves the settings, including any API key, in `~/.config/hark/config.json`, readable by you only. Each update sends the brief, the current document and the new transcript lines, and gets back a short list of edits. A one-hour meeting is roughly 100–200 small calls.
 
-Updates count towards your plan's usage limits. A one-hour meeting is roughly 100–200 small calls. To use less, raise the update interval or use `--model haiku`.
+| Service | What you need | Cost | Web research |
+|---|---|---|---|
+| **Your Claude subscription** (default) | Claude Code, signed in | Counts towards your plan's usage limits; nothing extra | Yes |
+| **Anthropic API** | An API key from [platform.claude.com](https://platform.claude.com/settings/keys) | Pay per use. Very roughly $1.50–3 for an hour-long meeting with Sonnet, or a few cents with `--model haiku`. Tidies, agendas and web research cost extra | Yes |
+| **OpenAI-compatible API** | The service's address, an API key and a model name | Whatever that service charges; nothing with a local model | No (it needs Claude) |
+
+The OpenAI-compatible option covers OpenAI, Google Gemini, OpenRouter, Mistral, and models running on your own machine with Ollama or LM Studio. Small local models may struggle to follow hark's instructions, so expect weaker documents from them.
+
+You can also choose per run, without saving: `hark --provider anthropic` (reads `ANTHROPIC_API_KEY`), or `hark --provider openai --base-url http://localhost:11434/v1 --model llama3.1` (reads `HARK_API_KEY` or `OPENAI_API_KEY` when a key is needed).
+
+Whichever service you choose, you still address it as "Claude, …" out loud.
+
+**With your Claude subscription**, each update runs `claude -p` (headless Claude Code) once. The call runs with `--safe-mode`, which skips your CLAUDE.md, MCP servers, plugins and hooks. It has no tools, and it isn't saved to your `/resume` history. hark removes `ANTHROPIC_API_KEY` from the call's environment so that usage counts against your subscription rather than API billing. To use less of your plan, raise the update interval or use `--model haiku`.
+
+**With the Anthropic API**, `sonnet`, `opus` and `haiku` mean the current models of those names; you can also give a full model ID. hark turns on Anthropic's automatic fallback, which retries a request on another Claude model if the first one declines it.
 
 ## Privacy
 
-Audio stays on your machine: voice detection, transcription and speaker matching all run locally. Transcript text and the document go to Claude through Claude Code. Let people know you're transcribing.
+Audio stays on your machine: voice detection, transcription and speaker matching all run locally. Transcript text and the document go to the AI service you chose: Anthropic for your Claude subscription or an Anthropic key, or the provider you set up otherwise. With a local model (Ollama, LM Studio), nothing leaves your machine except research lookups, which aren't available there anyway. Let people know you're transcribing.
 
 ## How it works
 
@@ -173,7 +190,7 @@ Everything on the speech side uses [sherpa-onnx](https://github.com/k2-fsa/sherp
 
 ## Troubleshooting
 
-- **"Claude couldn't update"**: run `hark --check`. If it says you're logged out, run `claude` and sign in.
+- **"Claude couldn't update"**: run `hark --check`. With your subscription, if it says you're logged out, run `claude` and sign in. With an API, run `hark --setup` to check the key, address and model name.
 - **The phone says the microphone is blocked**: open the `https://` link from `hark --lan`, not `http://`.
 - **No call audio**: the share dialog has a separate **Share audio** toggle. Turn it on.
 - **Transcription falls behind** (shown in the status line): try `--asr moonshine`.

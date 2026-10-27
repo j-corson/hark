@@ -46,6 +46,13 @@ def respelling(old: str, new: str) -> bool:
     return bool(a and b) and a != b and difflib.SequenceMatcher(None, a, b).ratio() >= 0.7
 
 
+def speaker_pairs(names) -> list[tuple]:
+    """(old label, new name) pairs from a list of {"from", "to"}, or from an older-style mapping."""
+    if isinstance(names, dict):
+        return list(names.items())
+    return [(n.get("from"), n.get("to")) for n in (names or []) if isinstance(n, dict)]
+
+
 def research_findings(s: Session, jobs: int = 8) -> list[str]:
     """Finished lookups with findings not yet in the document, numbered for the scribe to refer to."""
     out = []
@@ -91,7 +98,7 @@ class Hub:
         self.prep: tuple[Session, str] | None = None  # (session, agenda) for Claude to lay out with first questions
         self.last_call = 0.0
         self.retry_at = 0.0
-        self.claude = {"state": "idle", "detail": "" if scribe.available else "Claude CLI not found"}
+        self.claude = {"state": "idle", "detail": "" if scribe.available else getattr(scribe, "problem", "") or "no model available"}
         self._tasks: set[asyncio.Task] = set()
 
     # -- plumbing -----------------------------------------------------------
@@ -454,7 +461,7 @@ class Hub:
         new, failed = apply_ops(old, ops, base)
         s.processed = max(s.processed, upto)
         renamed = False
-        for label, name in (data.get("speaker_names") or {}).items():
+        for label, name in speaker_pairs(data.get("speaker_names")):
             label, name = str(label).strip(), str(name).strip()
             for sid, sp in list(s.speakers.items.items()):
                 if name and sp["name"].lower() == label.lower() and (sp["auto"] or respelling(sp["name"], name)):

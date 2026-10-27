@@ -1,18 +1,15 @@
 """Background research: look things up on the web while the conversation goes on.
 
 A request comes from the scribe (someone asked out loud, or in Tell Claude, for
-something to be looked up) or straight from the research panel. Each one runs
-its own `claude -p` with only WebSearch and WebFetch, and returns a short answer
-plus a few sourced findings. Nothing reaches the document until someone adds it.
+something to be looked up) or straight from the research panel. Each one is its own
+call with only web search and page fetching (Claude Code's WebSearch/WebFetch, or
+the Anthropic API's web tools), and returns a short answer plus a few sourced
+findings. Other providers have no web research. Nothing reaches the document until someone adds it.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
-import os
 import re
-import time
 
 from .scribe import Scribe, ScribeError
 
@@ -46,7 +43,6 @@ SCHEMA = {
     "required": ["answer", "items"],
 }
 
-TOOLS = "WebSearch,WebFetch"
 URL = re.compile(r"https?://[^\s<>\"'`]+")
 
 
@@ -62,75 +58,34 @@ def clean_url(url) -> str:
 
 
 class Researcher:
-    """Runs research calls with the same Claude CLI as the scribe, but with web tools on."""
+    """Runs research calls through the scribe's backend, with web search and fetch on."""
 
     def __init__(self, scribe: Scribe, model: str | None = None, effort: str = "medium", timeout: float = 360):
-        self.scribe = scribe
+        self.backend = scribe.backend
         self.model = model or scribe.model
         self.effort = effort
         self.timeout = timeout
-        self.system_file = os.path.join(scribe.workdir, "research-system.txt")
-        with open(self.system_file, "w", encoding="utf-8") as f:
-            f.write(SYSTEM)
 
     @property
     def available(self) -> bool:
-        return self.scribe.available and "--tools" in self.scribe.flags
-
-    def _cmd(self) -> list[str]:
-        flags = self.scribe.flags
-        cmd = [self.scribe.bin, "-p", "--model", self.model, "--output-format", "json",
-               "--system-prompt-file", self.system_file, "--tools", TOOLS, "--allowedTools", TOOLS]
-        if "--safe-mode" in flags:
-            cmd.append("--safe-mode")
-        if "--no-session-persistence" in flags:
-            cmd.append("--no-session-persistence")
-        if "--json-schema" in flags:
-            cmd += ["--json-schema", json.dumps(SCHEMA)]
-        if self.effort and "--effort" in flags:
-            cmd += ["--effort", self.effort]
-        return cmd
+        return self.backend.can_research
 
     async def run(self, question: str, topic: str = "") -> tuple[dict, float]:
-        if not self.available:
-            raise ScribeError("Research needs a recent Claude Code CLI")
-        env = dict(os.environ)
-        env.pop("ANTHROPIC_API_KEY", None)
-        env.pop("ANTHROPIC_AUTH_TOKEN", None)
         # Only the question and the document's title go out: the research call reads web pages, and
         # a hostile page shouldn't find the meeting's notes in its context to leak.
         prompt = (f"<topic>{clean(topic, 120)}</topic>\n\n" if topic else "") + f"<request>\n{question.strip()}\n</request>"
-        if "--json-schema" not in self.scribe.flags:
-            prompt += '\n\nReply with only a JSON object: {"answer": "...", "items": [{"title": "...", "note": "...", "url": "..."}]}'
-        t = time.time()
-        proc = await asyncio.create_subprocess_exec(
-            *self._cmd(), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, cwd=self.scribe.workdir, env=env)
+        hint = '{"answer": "...", "items": [{"title": "...", "note": "...", "url": "..."}]}'
         try:
-            out, err = await asyncio.wait_for(proc.communicate(prompt.encode()), self.timeout)
-        except (asyncio.TimeoutError, asyncio.CancelledError) as e:
-            proc.kill()
-            await proc.wait()
-            if isinstance(e, asyncio.CancelledError):
-                raise
-            raise ScribeError("Research took too long")
-        took = time.time() - t
-        try:
-            res = json.loads(out.decode() or "{}")
-        except json.JSONDecodeError:
-            raise ScribeError((err.decode() or out.decode()).strip()[:300] or f"claude exited with {proc.returncode}")
-        if res.get("is_error") or proc.returncode:
-            raise ScribeError(str(res.get("result") or err.decode().strip() or "Claude returned an error")[:300])
-        data = res.get("structured_output")
-        if data is None:
-            txt = (res.get("result") or "").strip()
-            s, e = txt.find("{"), txt.rfind("}")
-            try:
-                data = json.loads(txt[s:e + 1])
-            except Exception:
-                raise ScribeError("Could not read the research result")
+            data, took = await self.backend.research(SYSTEM, SCHEMA, prompt, model=self.model, effort=self.effort,
+                                                     timeout=self.timeout, hint=hint)
+        except ScribeError as e:
+            if "too long" in str(e) and "Claude took" in str(e):
+                raise ScribeError("Research took too long")
+            raise
         items = []
         for it in (data.get("items") or [])[:6]:
+            if not isinstance(it, dict):
+                continue
             items.append({"title": clean(it.get("title"), 250), "note": clean(it.get("note"), 250),
                           "url": clean_url(it.get("url")), "added": False})
         return {"answer": clean(data.get("answer"), 500), "items": [i for i in items if i["title"]]}, took

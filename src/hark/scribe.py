@@ -1,22 +1,15 @@
-"""Ask Claude for document edits, through the local Claude Code CLI.
+"""Ask the model for document edits.
 
-This uses `claude -p` (headless Claude Code), which authenticates with your
-Claude subscription login, so no API key or per-token billing is involved.
 Each update is one stateless call: brief + current document + new transcript
-in, a list of anchored edits out (validated against a JSON schema).
+in, a list of anchored edits out (validated against a JSON schema). By default
+it goes through the local Claude Code CLI and your Claude subscription; see
+backends.py for the API options.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
-import os
-import shutil
-import subprocess
-import tempfile
-import time
-
 from .agenda import PREP_SCHEMA, PREP_SYSTEM
+from .backends import Backend, ScribeError  # noqa: F401  (ScribeError is re-exported)
 
 SYSTEM = """You are the scribe for a live document that people glance at while they talk. You receive:
 - <brief>: what the document is for and how to organise it. Follow it.
@@ -55,7 +48,7 @@ Optional `research`: when someone explicitly asks for something to be looked up,
 
 Optional `research_used`: [{"id": 3, "items": [1, 2]}] for findings from <research_findings> you just added to the document (`id` from [R3], item numbers as listed).
 
-Optional `speaker_names`: map an auto-labelled speaker (e.g. "Speaker 2") to a real name only when the transcript makes it near-certain, e.g. someone introduces themselves or is addressed by name and that labelled speaker answers. Also use it to correct a name's spelling when someone spells it out ({"Claire": "Clare"}). Otherwise omit it.
+Optional `speaker_names`: [{"from": "Speaker 2", "to": "Ana"}] gives an auto-labelled speaker a real name, only when the transcript makes it near-certain, e.g. someone introduces themselves or is addressed by name and that labelled speaker answers. Also use it to correct a name's spelling when someone spells it out ({"from": "Claire", "to": "Clare"}). Otherwise omit it.
 
 Optional `ack`: when you carried out an instruction (spoken to you or typed), say in at most 15 words what you did and the result, specific enough to check later, e.g. "Swapped Q4 and Q5: Q4 is now teamwork, Q5 governance". Omit it otherwise.
 
@@ -93,7 +86,10 @@ SCHEMA = {
                 "required": ["op"],
             },
         },
-        "speaker_names": {"type": "object", "additionalProperties": {"type": "string"}},
+        "speaker_names": {
+            "type": "array",
+            "items": {"type": "object", "properties": {"from": {"type": "string"}, "to": {"type": "string"}}, "required": ["from", "to"]},
+        },
         "ack": {"type": "string"},
         "tidy": {"type": "boolean"},
         "research_used": {
@@ -107,10 +103,6 @@ SCHEMA = {
     },
     "required": ["ops"],
 }
-
-
-class ScribeError(Exception):
-    pass
 
 
 def build_prompt(brief: str, document: str, speakers: list[str], earlier: list[str], new: list[str], typed: list[str],
@@ -146,118 +138,36 @@ def build_tidy_prompt(brief: str, document: str, speakers: list[str]) -> str:
     return "\n\n".join(parts)
 
 
-def find_claude() -> str | None:
-    """Find the Claude Code CLI, even when started without your shell's PATH (e.g. as a service)."""
-    if os.environ.get("HARK_CLAUDE"):
-        return os.environ["HARK_CLAUDE"]
-    found = shutil.which("claude")
-    if found:
-        return found
-    home = os.path.expanduser("~")
-    names = ["claude.exe", "claude.cmd", "claude"] if os.name == "nt" else ["claude"]
-    dirs = [
-        os.path.join(home, ".local", "bin"),
-        os.path.join(home, ".claude", "local"),
-        os.path.join(home, ".npm-global", "bin"),
-        os.path.join(home, ".bun", "bin"),
-        os.path.join(os.environ.get("APPDATA", ""), "npm"),
-        "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin",
-    ]
-    for d in dirs:
-        for n in names:
-            p = os.path.join(d, n)
-            if os.path.isfile(p) and os.access(p, os.X_OK):
-                return p
-    return None
-
-
 class Scribe:
-    def __init__(self, model: str = "sonnet", effort: str | None = "low", claude_bin: str | None = None):
-        self.model = model
+    """Document updates, tidies and agenda prep, through whichever backend was chosen."""
+
+    def __init__(self, backend: Backend, effort: str | None = "low"):
+        self.backend = backend
         self.effort = effort
-        self.bin = claude_bin or find_claude()
-        self.flags: set[str] = set()
-        self.workdir = tempfile.mkdtemp(prefix="hark-claude-")  # empty dir: no project CLAUDE.md
-        # Pass the prompt as a file: long multi-line arguments get mangled by Windows .cmd shims.
-        self.system_file = os.path.join(self.workdir, "system.txt")
-        self.tidy_file = os.path.join(self.workdir, "tidy.txt")
-        self.prep_file = os.path.join(self.workdir, "prep.txt")
-        for path, text in ((self.system_file, SYSTEM), (self.tidy_file, TIDY_SYSTEM), (self.prep_file, PREP_SYSTEM)):
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(text)
-        if self.bin:
-            try:
-                h = subprocess.run([self.bin, "--help"], capture_output=True, text=True, timeout=30).stdout
-                self.flags = {f for f in ("--safe-mode", "--no-session-persistence", "--json-schema", "--tools", "--effort", "--strict-mcp-config") if f in h}
-            except Exception:
-                pass
+
+    @property
+    def model(self) -> str:
+        return self.backend.model
 
     @property
     def available(self) -> bool:
-        return bool(self.bin)
+        return self.backend.available
 
-    def _cmd(self, system_file: str, schema: dict, effort: str | None) -> list[str]:
-        cmd = [self.bin, "-p", "--model", self.model, "--output-format", "json", "--system-prompt-file", system_file]
-        if "--safe-mode" in self.flags:
-            cmd.append("--safe-mode")  # no CLAUDE.md, MCP servers, hooks or plugins; login still works
-        elif "--strict-mcp-config" in self.flags:
-            cmd += ["--strict-mcp-config", "--setting-sources", ""]
-        if "--no-session-persistence" in self.flags:
-            cmd.append("--no-session-persistence")  # keep these calls out of your /resume list
-        if "--tools" in self.flags:
-            cmd += ["--tools", ""]  # text in, edits out; no tools
-        if "--json-schema" in self.flags:
-            cmd += ["--json-schema", json.dumps(schema)]
-        if effort and "--effort" in self.flags:
-            cmd += ["--effort", effort]
-        return cmd
+    @property
+    def problem(self) -> str:
+        return self.backend.problem
 
     async def edit(self, prompt: str, timeout: float = 120) -> tuple[dict, float]:
         """One live update: edits to apply to the document."""
-        hint = '{"ops": [...], "speaker_names": {...}, "ack": "...", "research": [{"label": "...", "question": "..."}]}'
-        return await self._run(self._cmd(self.system_file, SCHEMA, self.effort), prompt, hint, timeout)
+        hint = '{"ops": [...], "speaker_names": [{"from": "...", "to": "..."}], "ack": "...", "research": [{"label": "...", "question": "..."}]}'
+        return await self.backend.json(SYSTEM, SCHEMA, prompt, effort=self.effort, timeout=timeout, hint=hint)
 
     async def rewrite(self, prompt: str, timeout: float = 240) -> tuple[dict, float]:
         """A tidy-up: the whole document back, consolidated. Worth a little more thought than an update."""
-        return await self._run(self._cmd(self.tidy_file, TIDY_SCHEMA, "medium" if self.effort else None),
-                               prompt, '{"document": "...", "summary": "..."}', timeout)
+        return await self.backend.json(TIDY_SYSTEM, TIDY_SCHEMA, prompt, effort="medium" if self.effort else None,
+                                       timeout=timeout, hint='{"document": "...", "summary": "..."}')
 
     async def prepare(self, prompt: str, timeout: float = 360) -> tuple[dict, float]:
         """Lay out a grilling session from its agenda, with first questions. One bigger call, before the talking starts."""
-        return await self._run(self._cmd(self.prep_file, PREP_SCHEMA, "medium" if self.effort else None),
-                               prompt, '{"document": "...", "summary": "...", "research": [...]}', timeout)
-
-    async def _run(self, cmd: list[str], prompt: str, hint: str, timeout: float) -> tuple[dict, float]:
-        if not self.bin:
-            raise ScribeError("Claude Code CLI not found. Install it and run `claude` once to log in.")
-        env = dict(os.environ)
-        # An API key in the environment would make the CLI bill the API instead of your subscription.
-        env.pop("ANTHROPIC_API_KEY", None)
-        env.pop("ANTHROPIC_AUTH_TOKEN", None)
-        if "--json-schema" not in self.flags:
-            prompt += f"\n\nReply with only a JSON object: {hint}"
-        t = time.time()
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, cwd=self.workdir, env=env)
-        try:
-            out, err = await asyncio.wait_for(proc.communicate(prompt.encode()), timeout)
-        except asyncio.TimeoutError:
-            proc.kill()
-            raise ScribeError("Claude took too long to respond")
-        took = time.time() - t
-        try:
-            res = json.loads(out.decode() or "{}")
-        except json.JSONDecodeError:
-            raise ScribeError((err.decode() or out.decode()).strip()[:300] or f"claude exited with {proc.returncode}")
-        if res.get("is_error") or proc.returncode:
-            raise ScribeError(str(res.get("result") or err.decode().strip() or "Claude returned an error")[:300])
-        data = res.get("structured_output")
-        if data is None:  # older CLI without --json-schema: parse JSON from the text
-            txt = (res.get("result") or "").strip()
-            s, e = txt.find("{"), txt.rfind("}")
-            try:
-                data = json.loads(txt[s:e + 1])
-            except Exception:
-                raise ScribeError("Could not read Claude's edits")
-        return data, took
+        return await self.backend.json(PREP_SYSTEM, PREP_SCHEMA, prompt, effort="medium" if self.effort else None,
+                                       timeout=timeout, hint='{"document": "...", "summary": "...", "research": [...]}')

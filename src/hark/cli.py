@@ -18,31 +18,14 @@ from pathlib import Path
 from aiohttp import web
 
 from . import __version__
+from . import config as settings_file
 from .agenda import parse as parse_agenda
+from .backends import PROVIDERS, make_backend
+from .config import CONFIG, config_dir, write_private
 from .modes import MODES
 from .session import default_data_dir
 
-CONFIG = Path(os.environ.get("HARK_CONFIG", Path.home() / ".config" / "hark"))
-
-
-def _config_dir() -> Path:
-    CONFIG.mkdir(parents=True, exist_ok=True, mode=0o700)
-    try:
-        CONFIG.chmod(0o700)
-    except OSError:
-        pass
-    return CONFIG
-
-
-def _write_private(path: Path, data: bytes) -> None:
-    """Write a secret so it is never readable by other users, even briefly."""
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "wb") as f:
-        f.write(data)
-    try:
-        path.chmod(0o600)  # in case the file already existed with wider permissions
-    except OSError:
-        pass
+_config_dir, _write_private = config_dir, write_private
 
 
 def token() -> str:
@@ -108,23 +91,50 @@ def print_qr(url: str) -> None:
         pass
 
 
+def resolve(args) -> dict:
+    """Settings from the command line, then the environment, then `hark --setup`, then defaults."""
+    saved = settings_file.load()
+    provider = args.provider or os.environ.get("HARK_PROVIDER") or saved.get("provider") or "claude-code"
+    same = provider == saved.get("provider", "claude-code")
+    pick = lambda flag, env, key: flag or os.environ.get(env) or (saved.get(key) if same else None)
+    return {"provider": provider, "model": pick(args.model, "HARK_MODEL", "model"),
+            "research_model": pick(args.research_model, "HARK_RESEARCH_MODEL", "research_model"),
+            "base_url": pick(args.base_url, "HARK_BASE_URL", "base_url"),
+            "api_key": saved.get("api_key") if same else None}
+
+
+def build_scribe(args):
+    from .scribe import Scribe
+    cfg = resolve(args)
+    backend = make_backend(cfg["provider"], cfg["model"], cfg["base_url"], cfg["api_key"])
+    return Scribe(backend, args.effort), cfg
+
+
 def check(args) -> None:
     from . import models
-    from .scribe import Scribe, build_prompt
+    from .scribe import build_prompt
 
     print("Speech models ...", flush=True)
     models.ensure(args.asr)
     print("  ok", flush=True)
-    sc = Scribe(args.model, args.effort)
+    sc, cfg = build_scribe(args)
     if not sc.available:
-        raise SystemExit("Claude Code CLI not found. Install it and run `claude` once to log in.")
-    print(f"Claude ({args.model}) via {sc.bin} ...", flush=True)
+        raise SystemExit(sc.problem)
+    print(f"Model {sc.model} via {sc.backend.label} ...", flush=True)
     prompt = build_prompt("Meeting notes.", "# Notes\n\n## Decisions\n", [], [], ["[10:00:00] Ana: We agreed to ship on Friday."], [])
+    async def once():
+        try:
+            return await sc.edit(prompt)
+        finally:
+            await sc.backend.aclose()
+
     try:
-        data, took = asyncio.run(sc.edit(prompt))
+        data, took = asyncio.run(once())
     except Exception as e:
-        raise SystemExit(f"  failed: {e}\n  Run `claude` in a terminal to log in, then try again.")
+        hint = "Run `claude` in a terminal to log in" if cfg["provider"] == "claude-code" else "Run `hark --setup` to check the settings"
+        raise SystemExit(f"  failed: {e}\n  {hint}, then try again.")
     print(f"  ok: {len(data.get('ops', []))} edit(s) in {took:.1f}s", flush=True)
+    print("  Web research: " + ("available" if sc.backend.can_research else "not available with this service (it needs Claude)"))
     print("All set. Run `hark` to start.")
 
 
@@ -135,8 +145,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--agenda", metavar="FILE", type=Path,
                    help="start from an agenda (Markdown or text, one item per bullet or line); in grilling mode Claude drafts first questions")
     p.add_argument("--lan", action="store_true", help="also serve over HTTPS on your local network (to use a phone)")
-    p.add_argument("--model", default=os.environ.get("HARK_MODEL", "sonnet"), help="Claude model alias for document updates (default: sonnet)")
-    p.add_argument("--research-model", default=os.environ.get("HARK_RESEARCH_MODEL"), help="Claude model for background research (default: same as --model)")
+    p.add_argument("--setup", action="store_true", help="choose which AI service hark uses (your Claude subscription, or an API key), then exit")
+    p.add_argument("--provider", choices=PROVIDERS,
+                   help="AI service: claude-code (your Claude subscription, the default), anthropic (API key) or openai (any OpenAI-compatible API)")
+    p.add_argument("--model", help="model for document updates (default: sonnet; with --provider openai, the service's model name)")
+    p.add_argument("--base-url", help="API address, for --provider openai (default https://api.openai.com/v1)")
+    p.add_argument("--research-model", help="model for background research (default: same as --model)")
     p.add_argument("--effort", default="low", help="Claude effort level (low/medium/high); low keeps updates quick")
     p.add_argument("--asr", default=os.environ.get("HARK_ASR", "parakeet"), choices=["parakeet", "moonshine"],
                    help="speech model: parakeet (accurate, multilingual) or moonshine (faster, English)")
@@ -153,8 +167,15 @@ def main(argv: list[str] | None = None) -> None:
     args = p.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
-    logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
+    for name in ("aiohttp.access", "httpx", "httpx2", "httpcore2", "anthropic", "openai"):
+        logging.getLogger(name).setLevel(logging.WARNING)  # no line per API request
 
+    if args.setup:
+        settings_file.wizard()
+        print("Checking it works ...\n")
+        args.provider = args.model = args.base_url = args.research_model = None
+        check(args)
+        return
     if args.check:
         check(args)
         return
@@ -165,30 +186,33 @@ def main(argv: list[str] | None = None) -> None:
         agenda_text = args.agenda.read_text(encoding="utf-8", errors="replace")
     if args.rebuild:
         from .rebuild import rebuild
-        from .scribe import Scribe
 
         if not args.rebuild.is_file():
             raise SystemExit(f"No such file: {args.rebuild}")
-        scribe = Scribe(args.model, args.effort)
+        scribe, _cfg = build_scribe(args)
         if not scribe.available:
-            raise SystemExit("Claude Code CLI not found. Install it and run `claude` once to log in.")
+            raise SystemExit(scribe.problem)
         args.data_dir.mkdir(parents=True, exist_ok=True)
-        asyncio.run(rebuild(args.rebuild, args.data_dir, args.mode, scribe))
+        async def go():
+            try:
+                await rebuild(args.rebuild, args.data_dir, args.mode, scribe)
+            finally:
+                await scribe.backend.aclose()
+
+        asyncio.run(go())
         return
     print("hark: loading speech models (first run downloads them) ...", file=sys.stderr, flush=True)
     from .engine import Engine
     from .hub import Hub
-    from .scribe import Scribe
     from .server import make_app
 
     engine = Engine(args.asr)
-    scribe = Scribe(args.model, args.effort)
+    scribe, cfg = build_scribe(args)
     if not scribe.available:
-        print("\n  ! Claude Code CLI not found: transcripts will work but the document won't update.\n"
-              "    Install it (https://claude.com/claude-code) and run `claude` once to log in.\n", file=sys.stderr)
+        print(f"\n  ! {scribe.problem}\n    Transcripts will work but the document won't update.\n", file=sys.stderr)
     args.data_dir.mkdir(parents=True, exist_ok=True)
     from .research import Researcher
-    hub = Hub(engine, scribe, args.data_dir, args.speaker_threshold, Researcher(scribe, args.research_model))
+    hub = Hub(engine, scribe, args.data_dir, args.speaker_threshold, Researcher(scribe, cfg["research_model"]))
     hub.session.set_mode(args.mode)
     key = token()
     app = make_app(hub, key)
@@ -205,6 +229,8 @@ def main(argv: list[str] | None = None) -> None:
         await web.TCPSite(runner, "127.0.0.1", args.port).start()
         local = f"http://localhost:{args.port}/?k={key}"
         print(f"\n  hark is running. Open:  {local}", flush=True)
+        if scribe.available:
+            print(f"  Documents are written by {scribe.model} via {scribe.backend.label}.", flush=True)
         if args.lan:
             ips = lan_ips()
             await web.TCPSite(runner, "0.0.0.0", args.port + 1, ssl_context=tls_context(ips)).start()
