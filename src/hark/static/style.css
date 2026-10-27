@@ -183,6 +183,9 @@ dialog::backdrop { background: color-mix(in srgb, #000 40%, transparent); }
 .dlg .hint { margin: 0; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
 .dlg textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: var(--sheet); font-size: 15px; line-height: 1.5; }
 .dlg .inline input { width: 5em; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; background: var(--sheet); }
+.dlg { grid-template-columns: minmax(0, 1fr); }
+.dlg .inline select { display: block; width: 100%; margin-top: 4px; border: 1px solid var(--line); border-radius: 6px; padding: 6px; background: var(--sheet); }
+.dlg .inline.file input { width: auto; max-width: 100%; border: 0; padding: 0; }
 .dlg .row { display: flex; justify-content: flex-end; gap: 8px; }
 .sesslist { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow-y: auto; }
 .sesslist button { width: 100%; text-align: left; display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; }

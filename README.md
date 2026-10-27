@@ -4,6 +4,7 @@ hark listens to a conversation and keeps a live, structured document you can gla
 
 - **Meeting** mode keeps a running summary, decisions, actions and open questions.
 - **Co-writing** mode builds the document you're dictating or working out together, such as a paper outline or a list of interview questions. It keeps only what you settle on. Ideas still being discussed go in a folded **Working notes** section at the end. Spoken edits like "no, that goes in the methods" or "move the policy bit into its own section" are applied to the document instead of being written down.
+- **Grilling** mode turns a list of ideas into specs that are clear enough to hand to an agent or a colleague. Claude keeps a few questions open on the item you're discussing, each with a suggested answer, and fills in the spec as you answer them.
 - **Notes** mode groups the content by topic.
 
 It tells speakers apart by voice. You can edit any line by hand at any time, and Claude works around your edits rather than overwriting them. Speech recognition runs on your machine. Document updates go through **your Claude subscription** via the Claude Code CLI, so no API key is needed.
@@ -56,6 +57,39 @@ The link includes a private key, and only browsers that have opened it can conne
 - While you're editing, Claude waits. Its next update applies small anchored changes to the document as it now stands, so your wording isn't reverted.
 - Text Claude has just added or changed is highlighted for about 25 seconds.
 
+## Starting from an agenda
+
+Use **More → Start from an agenda…** (or `hark --agenda agenda.md`) to start from a plan written beforehand. Paste it or load a file. The format is loose: an optional `# Title`, then one item per bullet or line. Indented lines under an item are notes on it.
+
+```md
+# Research backlog ideas
+- Ofgem consultation responses: how supplier views on flexibility changed
+  - every response since 2010?
+- Half-hourly smart meter data, 1,000 homes
+```
+
+- **For a meeting**, the agenda becomes a checklist at the top of the document. Claude ticks items off as the group finishes them, so anyone can see where the meeting has got to.
+- **For grilling**, each item becomes a numbered spec. One Claude call (usually 15–30 seconds) drafts each item's first questions before anyone speaks. It may also suggest a few facts to look up; these appear in the Research panel but don't start until you press **Research this**.
+
+If the current session already has something in it, the agenda starts a new session and the current one is kept.
+
+## Grilling
+
+Each item gets these fields: **Question**, **Data**, **Approach**, **Done when**, **Track**, **Depends on**, **Who cares** and **Status**. A field shows "?" until it's settled, so you can see what's still missing. **Track** says how hard to grill an item:
+
+- **explore** is a quick go/no-go look. Question, Data and Done when are enough.
+- **spec tightly** needs every field.
+
+While you're on an item, Claude keeps up to three open questions under it, most important first, each with ➡️ a suggested answer. Saying "yes" accepts the suggestion. When something is settled, the answer goes into its field and the next question appears. Claude only grills the item you're on. New ideas raised along the way are added as items and left alone until you turn to them, so a brainstorm isn't interrupted.
+
+- If people disagree, the question is marked as disputed with each position, and Claude doesn't take a side.
+- Facts that can be looked up rather than decided (is the dataset public? what licence?) are listed under the item as "Look up". Say "Claude, look that up" to research one.
+- "Claude, park that" moves a question or item to **Parked**. "Claude, say that more simply" rewords a question.
+- Terms used loosely ("flexibility") get a question, then an entry in **Shared terms**.
+- An item is marked ready only when the group says it's done with it ("next item").
+
+The method (ask everything that can be answered now, with a recommended answer, and let "yes" accept it) is adapted from Matt Pocock's [grilling skill](https://github.com/mattpocock/skills/blob/main/skills/productivity/grilling/SKILL.md), which is MIT-licensed.
+
 ## Research
 
 The panel beside the document (the **Research** tab; on a phone, the **Research** button) runs lookups in the background while you keep talking.
@@ -105,7 +139,8 @@ To send the document to someone, use **More → Share…**, which opens your pho
 
 | Option | What it does |
 |---|---|
-| `--mode meeting\|outline\|notes` | Starting mode. You can also switch in the app; while a document is still empty, switching changes its template. |
+| `--mode meeting\|outline\|grill\|notes` | Starting mode. You can also switch in the app; while a document is still empty, switching changes its template. |
+| `--agenda file.md` | Start from an agenda (see [Starting from an agenda](#starting-from-an-agenda)). |
 | `--model sonnet` | Claude model for updates. `haiku` is lighter on usage, and `opus` is the most careful. |
 | `--research-model opus` | Claude model for research lookups. The default is the same as `--model`. |
 | `--asr parakeet\|moonshine` | Speech model. Parakeet (default) is accurate, adds punctuation and handles 25 European languages. Moonshine is English-only, smaller and faster, for older laptops. |

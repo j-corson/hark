@@ -16,6 +16,8 @@ import subprocess
 import tempfile
 import time
 
+from .agenda import PREP_SCHEMA, PREP_SYSTEM
+
 SYSTEM = """You are the scribe for a live document that people glance at while they talk. You receive:
 - <brief>: what the document is for and how to organise it. Follow it.
 - <document>: the current Markdown, which the user may have edited by hand. It is authoritative. Never undo, re-word or reorder the user's hand edits unless the conversation asks for that.
@@ -179,7 +181,8 @@ class Scribe:
         # Pass the prompt as a file: long multi-line arguments get mangled by Windows .cmd shims.
         self.system_file = os.path.join(self.workdir, "system.txt")
         self.tidy_file = os.path.join(self.workdir, "tidy.txt")
-        for path, text in ((self.system_file, SYSTEM), (self.tidy_file, TIDY_SYSTEM)):
+        self.prep_file = os.path.join(self.workdir, "prep.txt")
+        for path, text in ((self.system_file, SYSTEM), (self.tidy_file, TIDY_SYSTEM), (self.prep_file, PREP_SYSTEM)):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
         if self.bin:
@@ -218,6 +221,11 @@ class Scribe:
         """A tidy-up: the whole document back, consolidated. Worth a little more thought than an update."""
         return await self._run(self._cmd(self.tidy_file, TIDY_SCHEMA, "medium" if self.effort else None),
                                prompt, '{"document": "...", "summary": "..."}', timeout)
+
+    async def prepare(self, prompt: str, timeout: float = 360) -> tuple[dict, float]:
+        """Lay out a grilling session from its agenda, with first questions. One bigger call, before the talking starts."""
+        return await self._run(self._cmd(self.prep_file, PREP_SCHEMA, "medium" if self.effort else None),
+                               prompt, '{"document": "...", "summary": "...", "research": [...]}', timeout)
 
     async def _run(self, cmd: list[str], prompt: str, hint: str, timeout: float) -> tuple[dict, float]:
         if not self.bin:

@@ -18,6 +18,7 @@ from pathlib import Path
 from aiohttp import web
 
 from . import __version__
+from .agenda import parse as parse_agenda
 from .modes import MODES
 from .session import default_data_dir
 
@@ -131,6 +132,8 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="hark", description="Listen to a conversation and keep a live document with Claude.")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--mode", default="meeting", choices=list(MODES), help="starting document mode (switchable in the app)")
+    p.add_argument("--agenda", metavar="FILE", type=Path,
+                   help="start from an agenda (Markdown or text, one item per bullet or line); in grilling mode Claude drafts first questions")
     p.add_argument("--lan", action="store_true", help="also serve over HTTPS on your local network (to use a phone)")
     p.add_argument("--model", default=os.environ.get("HARK_MODEL", "sonnet"), help="Claude model alias for document updates (default: sonnet)")
     p.add_argument("--research-model", default=os.environ.get("HARK_RESEARCH_MODEL"), help="Claude model for background research (default: same as --model)")
@@ -155,6 +158,11 @@ def main(argv: list[str] | None = None) -> None:
     if args.check:
         check(args)
         return
+    agenda_text = None
+    if args.agenda:
+        if not args.agenda.is_file():
+            raise SystemExit(f"No such file: {args.agenda}")
+        agenda_text = args.agenda.read_text(encoding="utf-8", errors="replace")
     if args.rebuild:
         from .rebuild import rebuild
         from .scribe import Scribe
@@ -186,6 +194,12 @@ def main(argv: list[str] | None = None) -> None:
     app = make_app(hub, key)
 
     async def run():
+        if agenda_text is not None:
+            if not await hub.load_agenda(agenda_text, args.mode):
+                raise SystemExit(f"No agenda items found in {args.agenda}. Put one item per bullet or line.")
+            n = len(parse_agenda(agenda_text)[2])
+            print(f"  Agenda: {n} item{'s' * (n != 1)} from {args.agenda}"
+                  + (" (Claude is drafting first questions)" if hub.prep else ""), flush=True)
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
         await web.TCPSite(runner, "127.0.0.1", args.port).start()

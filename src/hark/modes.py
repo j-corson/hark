@@ -11,6 +11,7 @@ MODES = {
         "brief": """Keep a running record of this meeting that someone can glance at mid-conversation.
 
 - Summary: 2-6 bullets saying what the meeting is about and where it has got to. Revise these as things move on; don't let them grow into a log.
+- Agenda, if there is one: the plan, written before the meeting. Keep its items and wording. Tick an item (`- [x]`) once the group has finished with it, and add or drop items only when the group says so.
 - Discussion: one ### sub-heading per topic or agenda item, with short bullets of the substance (facts, figures, positions, reasons). Not a transcript. When a topic comes back, update its bullets rather than adding near-repeats.
 - Decisions: things the group actually agreed.
 - Actions: `- [ ] **Owner**: task (due date if one was given)`.
@@ -34,6 +35,39 @@ When something said earlier is corrected ("it's 43, not 42"), fix the existing t
 - When someone corrects themselves, keep only the corrected version.
 - Mark a point in the document "(?)" only if they say it is provisional, and drop the mark once it is agreed.
 - Do not add content nobody said. You may tidy wording and fix obvious mis-transcriptions.""",
+    },
+    "grill": {
+        "label": "Grilling",
+        "interval": 10,
+        "template": "# Grilling session\n\n## Items\n\n## Shared terms\n\n## Parked\n",
+        # The grilling method (rounds of answerable-now questions, each with a recommended
+        # answer that "yes" accepts) is adapted from Matt Pocock's grilling skill (MIT):
+        # https://github.com/mattpocock/skills/blob/main/skills/productivity/grilling/SKILL.md
+        "brief": """The group is going through ideas (datasets, research questions, pieces of work) to make each one specific enough to hand to an agent or a colleague. Keep each item's spec up to date as they talk, and grill them: keep a few sharp questions open on the item under discussion until nothing important is left assumed.
+
+Each item is a numbered ### heading under "## Items" (e.g. "### 3. Ofgem consultation responses"), with these bullets:
+- **Question**: what exactly they want to find out or produce.
+- **Data**: the source, whether it is open or restricted, and how to get it.
+- **Approach**: the analysis, test or method.
+- **Done when**: the check that shows the work is finished, or worth taking further. Something an agent could test its own output against.
+- **Track**: explore (a quick go/no-go look: Question, Data and Done when are enough) or spec tightly (every field needed).
+- **Depends on**: other items or tasks that have to come first, or "nothing".
+- **Who cares**: who wants the result.
+- **Status**: not started, being grilled, ready or parked.
+Fill a field only from what was said, or from a suggestion the group accepted. Otherwise leave it as "?".
+
+Grilling:
+- Grill only the item being discussed. When someone brings up a new idea, add it as a new item with its Question and leave it alone until the group turns to it, so the brainstorm keeps flowing.
+- Under the item being discussed keep "#### Open questions": at most 3, most important first, numbered within the item. Ask only what can be answered now, never a question that hangs on another open one.
+- Write each as `- **Q2. Short title**: the question, in one sentence a non-specialist can follow. ➡️ Suggested: <your recommended answer>`, e.g. `- **Q1. Years covered**: Which years should the corpus cover? ➡️ Suggested: every response from 2010 to now.` A plain "yes" from the group accepts the suggestion, so state the answer itself and don't start it with "Yes".
+- When the conversation answers a question (a "yes" to the suggestion counts), write the answer into its field and remove the question. Then add the next question that answer opens up, if there is one.
+- If people disagree, keep the question and add "(disputed: <each position in a few words>)". Don't take a side.
+- Facts that can be looked up rather than decided (whether a dataset is public, its size, its licence) are not questions for the group: list them under the item as `- Look up: ...`. If someone asks you to look one up, request it as research.
+- "Claude, park that" moves the question, or the whole item with Status parked, to "## Parked". "Claude, say that more simply" rewords a question in plainer language.
+- An item is ready when its track's fields are filled and no open questions are left. Set Status to ready, and remove its Open questions, only when the group says they are done with it ("that's enough on this one", "next item").
+- "## Shared terms": when a term is used loosely or in different ways ("flexibility", "backlog item"), ask what they mean as an open question, then record `**Term**: one-sentence definition. _Avoid_: other words used for it`.
+
+Replace the "Grilling session" H1 with a short descriptive title once the topic is clear; it names the saved file.""",
     },
     "notes": {
         "label": "Notes",

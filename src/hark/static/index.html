@@ -35,6 +35,7 @@
       <button type="button" id="shareFileBtn" data-act="sharefile">Share as file…</button>
       <button type="button" data-act="copy">Copy Markdown</button>
       <button type="button" data-act="download">Download .md</button>
+      <button type="button" data-act="agenda">Start from an agenda…</button>
       <button type="button" data-act="brief">Instructions for Claude…</button>
       <button type="button" data-act="sessions">Open a previous session…</button>
       <button type="button" data-act="new">New session</button>
@@ -96,6 +97,22 @@
     <textarea id="briefText" rows="14"></textarea>
     <label class="inline">Update at most every <input id="intervalIn" type="number" min="3" max="300"> seconds</label>
     <div class="row"><button value="cancel" class="quiet">Cancel</button><button value="ok" class="primary" id="briefSave">Save</button></div>
+  </form>
+</dialog>
+
+<dialog id="agendaDlg">
+  <form method="dialog" class="dlg">
+    <h2>Start from an agenda</h2>
+    <p class="hint">One item per line or bullet. Indented lines under an item are notes on it, and a “# Title” line names the document. If this session already has something in it, a new session is started and this one is kept.</p>
+    <label class="inline">Use it for
+      <select id="agendaMode">
+        <option value="meeting">a meeting: a checklist Claude ticks off</option>
+        <option value="grill">grilling: Claude drafts first questions</option>
+      </select>
+    </label>
+    <textarea id="agendaText" rows="12" placeholder="# Research backlog ideas&#10;- Ofgem consultation responses: how supplier views on flexibility changed&#10;  - every response since 2010?&#10;- Half-hourly smart meter data for 1,000 homes"></textarea>
+    <label class="inline file">Or load a file <input type="file" id="agendaFile" accept=".md,.markdown,.txt,text/plain,text/markdown"></label>
+    <div class="row"><button value="cancel" class="quiet">Cancel</button><button value="ok" class="primary">Start</button></div>
   </form>
 </dialog>
 

@@ -19,10 +19,12 @@ from pathlib import Path
 
 import numpy as np
 
+from . import agenda
 from .docops import apply_ops, changed_lines, rename_in_doc
 from .engine import SR, AudioStream, Engine
 from .research import Researcher, clean, clean_url
 from .scribe import Scribe, ScribeError, build_prompt, build_tidy_prompt
+from .modes import MODES
 from .session import Session, list_sessions
 
 log = logging.getLogger("hark")
@@ -86,6 +88,7 @@ class Hub:
         self.tidy_at = 0.0  # earliest time a "stop" tidy may start
         self.held_tidy: tuple | None = None  # tidied document waiting for someone to finish editing
         self.tidied: tuple[str, int] | None = None  # (session id, version) right after the last tidy
+        self.prep: tuple[Session, str] | None = None  # (session, agenda) for Claude to lay out with first questions
         self.last_call = 0.0
         self.retry_at = 0.0
         self.claude = {"state": "idle", "detail": "" if scribe.available else "Claude CLI not found"}
@@ -228,7 +231,9 @@ class Hub:
         while True:
             await asyncio.sleep(0.5)
             try:
-                if self._due():
+                if self._prep_due():
+                    await self._prepare()
+                elif self._due():
                     await self._update()
                 elif self._tidy_due():
                     await self._tidy()
@@ -293,6 +298,75 @@ class Hub:
             self.tidy_wanted = "asked"
         self.held = (s, upto, data, took, base)
         await self._maybe_release_held()
+
+    # -- starting from an agenda ---------------------------------------------
+    async def load_agenda(self, text: str, mode: str | None = None) -> bool:
+        """Start the document from an agenda. A session that already has content is kept, and a new one started."""
+        text = (text or "").strip()[:agenda.MAX_CHARS]
+        _title, _context, items = agenda.parse(text)
+        if not items:
+            return False
+        s = self.session
+        mode = mode if mode in MODES else s.mode
+        if not s.untouched:
+            s.save()
+            s = self._switch(Session(self.data_dir, mode=mode, threshold=self.threshold))
+        else:
+            s.set_mode(mode)
+        s.set_doc(agenda.layout(text, s.mode), by="agenda")
+        if s.mode == "grill" and self.scribe.available:
+            self.prep = (s, text)
+        s.save()
+        await self.push_state()
+        return True
+
+    def _prep_due(self) -> bool:
+        return bool(self.prep) and not self.busy and not self.held and not self.held_tidy and self.scribe.available
+
+    async def _prepare(self) -> None:
+        s, text = self.prep
+        self.prep = None
+        if s is not self.session:
+            return
+        self.busy = True
+        self.claude = {"state": "preparing", "detail": ""}
+        await self.push_status()
+        base = s.doc
+        try:
+            data, took = await self.scribe.prepare(agenda.build_prep_prompt(s.brief, text))
+        except ScribeError as e:
+            self.claude = {"state": "error", "detail": f"couldn't prepare the questions: {e}"}
+            log.warning("prepare: %s", e)
+            return
+        finally:
+            self.busy = False
+            self.last_call = time.time()
+            await self.push_status()
+        doc = str(data.get("document") or "").strip()
+        if not doc.startswith("#") or len(doc) < 0.8 * len(base.strip()):
+            self.claude = {"state": "error", "detail": "the prepared questions came back incomplete, so the agenda was left as it was"}
+            await self.push_status()
+            return
+        while self.editing and s is self.session:
+            await asyncio.sleep(0.5)  # don't swap the document out from under someone's edit
+        if s is not self.session:
+            return
+        if s.doc != base:
+            await self.broadcast({"type": "toast", "text": "The agenda changed while Claude was drafting questions, so it kept your version."})
+        elif s.set_doc(doc, by="claude"):
+            await self.push_doc(changed_lines(base, s.doc), by="claude")
+            summary = str(data.get("summary") or "").strip().rstrip(".")[:120]
+            await self.broadcast({"type": "toast", "text": f"✓ Ready to grill{': ' + summary if summary else ''}."})
+        self.claude = {"state": "idle", "detail": f"prepared in {took:.0f}s"}
+        await self._requested_research(s, data.get("research") or [], state="proposed", origin="agenda")
+        await self.push_status()
+
+    def _switch(self, s: Session) -> Session:
+        self.session = s
+        self.held = None
+        self.held_tidy, self.tidy_wanted = None, None
+        self.prep = None
+        return s
 
     # -- tidying up ---------------------------------------------------------
     @property
@@ -437,15 +511,15 @@ class Hub:
             await self.broadcast({"type": "research", "job": job})
         await self.push_status()
 
-    async def _requested_research(self, s: Session, reqs: list) -> None:
-        """Lookups the scribe heard someone ask for."""
+    async def _requested_research(self, s: Session, reqs: list, state: str | None = None, origin: str = "conversation") -> None:
+        """Lookups the scribe heard someone ask for (or, with `state="proposed"`, ones it suggests)."""
         known = {j["q"].strip().lower() for j in s.research}
         for r in reqs[:3]:
             q = str((r or {}).get("question") or "").strip()
             if not q or q.lower() in known:
                 continue
             known.add(q.lower())
-            job = s.add_research(q, "conversation", "queued" if s.research_auto else "proposed", str(r.get("label") or ""))
+            job = s.add_research(q, origin, state or ("queued" if s.research_auto else "proposed"), str(r.get("label") or ""))
             if job["state"] == "queued":
                 self.research_queue.append((s, job))
             await self.push_research(s, job)
@@ -610,17 +684,16 @@ class Hub:
             await self.push_state()
         elif kind == "new_session":
             s.save()
-            self.session = Session(self.data_dir, mode=msg.get("mode") or s.mode, threshold=self.threshold)
-            self.held = None
-            self.held_tidy, self.tidy_wanted = None, None
+            self._switch(Session(self.data_dir, mode=msg.get("mode") or s.mode, threshold=self.threshold))
             await self.push_state()
+        elif kind == "agenda":
+            if not await self.load_agenda(str(msg.get("text") or ""), msg.get("mode")):
+                await self.send(ws, {"type": "toast", "text": "No agenda items found. Put one item per line or bullet."})
         elif kind == "open_session":
             sid = msg.get("id", "")
             if sid and (self.data_dir / sid / "session.json").exists() and "/" not in sid and "\\" not in sid and ".." not in sid:
                 s.save()
-                self.session = Session.load(self.data_dir, sid, self.threshold)
-                self.held = None
-                self.held_tidy, self.tidy_wanted = None, None
+                self._switch(Session.load(self.data_dir, sid, self.threshold))
                 await self.push_state()
 
     async def _edit_lines(self, ws, msg: dict) -> None:

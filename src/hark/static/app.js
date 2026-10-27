@@ -296,9 +296,10 @@
     $("startBtn").classList.toggle("on", listening);
     $("startBtn").textContent = listening ? "Stop" : "Start listening";
     let text = "", cls = "";
-    $("tidyBtn").disabled = c.state === "tidying";
+    $("tidyBtn").disabled = c.state === "tidying" || c.state === "preparing";
     if (c.state === "thinking") { text = `Claude is updating the document (${c.detail})`; cls = "thinking"; }
     else if (c.state === "tidying") { text = "Claude is tidying up the document…"; cls = "thinking"; }
+    else if (c.state === "preparing") { text = "Claude is drafting first questions for each item…"; cls = "thinking"; }
     else if (s.editing) { text = "Claude waits while you edit"; cls = "paused"; }
     else if (c.state === "error") { text = `Claude couldn't update: ${c.detail}`; cls = "error"; }
     else if (listening) text = s.pending ? `Listening. ${s.pending} new line${s.pending === 1 ? "" : "s"} for the next update.` : (c.detail ? `Listening. Last update: ${c.detail}.` : "Listening.");
@@ -462,6 +463,11 @@
       $("briefText").value = st.session.brief;
       $("intervalIn").value = st.session.interval;
       $("briefDlg").showModal();
+    } else if (act === "agenda") {
+      const mode = st.session && st.session.mode;
+      $("agendaMode").value = mode === "grill" ? "grill" : "meeting";
+      $("agendaFile").value = "";
+      $("agendaDlg").showModal();
     } else if (act === "sessions") {
       renderSessions(); $("sessDlg").showModal();
     } else if (act === "new") {
@@ -469,6 +475,18 @@
       send({ type: "new_session", mode: $("modeSel").value });
       st.fresh.clear();
     }
+  });
+  $("agendaFile").onchange = async () => {
+    const f = $("agendaFile").files[0];
+    if (f) $("agendaText").value = await f.text();
+  };
+  $("agendaDlg").addEventListener("close", () => {
+    if ($("agendaDlg").returnValue !== "ok") return;
+    const text = $("agendaText").value.trim();
+    if (!text) { toast("The agenda was empty, so nothing changed."); return; }
+    send({ type: "agenda", text, mode: $("agendaMode").value });
+    st.fresh.clear();
+    $("agendaText").value = "";
   });
   $("briefDlg").addEventListener("close", () => {
     if ($("briefDlg").returnValue === "ok") send({ type: "set_brief", brief: $("briefText").value, interval: +$("intervalIn").value });
