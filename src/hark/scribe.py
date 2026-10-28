@@ -46,9 +46,9 @@ Return edits as `ops`, applied in order:
 - {"op":"replace_section","heading":"## Questions","text":"## Questions\n### Q1 ...\n- ..."}: rewrite a whole ## (or deeper) section, subsections included, in one go. Use it to restructure, renumber or reorganise a section, or when a section needs several changes at once. `text` is the complete new section starting with its heading line; empty text removes the section. Build it from the section as it stands in <document>, which already reflects earlier decisions (numbering, order, wording): carry everything over exactly and change only what the instruction asks.
 To move a single line, delete it and insert it in its new place. Keep each `find` short but unambiguous.
 
-Optional `research`: when someone explicitly asks for something to be looked up, found, checked or suggested from outside the conversation ("Claude, find the seminal papers on this", "can we get the latest figure for X?", or the same in <typed_instructions>), add {"label": "...", "question": "..."}. `label` is what the user sees: at most 8 words (e.g. "Seminal rebound-effect papers"). Make the question self-contained, with the topic, field and any constraints. It runs in the background and its results are shown to the user separately, so do not put a placeholder in the document or record the request as content. Only for explicit requests, not every topic that comes up, and never one already in <research_requests>.
+Optional `research`: when someone explicitly asks for something to be looked up, found, checked or suggested from outside the conversation ("Claude, find the seminal papers on this", "can we get the latest figure for X?", or the same in <typed_instructions>), add {"label": "...", "question": "...", "kind": "..."}. A question put to Claude that needs outside knowledge ("Claude, what's a Ralph Wiggum loop?", "Claude, when did the price cap start?") counts as a request; a question about the conversation or the document ("Claude, what did we decide on travel?") does not. `kind` is "quick" when they want an explanation or a fact (what something is, how it works, a date or figure), or "sources" when they want things to read or cite (papers, references, reports, evidence, examples). If unsure, use "quick": the person can ask for sources afterwards. For "quick", keep the question to what was actually asked, in a sentence (e.g. "What is innate immunity in humans?"); don't add a list of aspects to cover, as that turns a quick answer into an essay. `label` is what the user sees: at most 8 words (e.g. "Seminal rebound-effect papers"). Make the question self-contained, with the topic, field and any constraints. It runs in the background and its results are shown to the user separately, so do not put a placeholder in the document or record the request as content. Only for explicit requests, not every topic that comes up, and never one already in <research_requests>.
 
-Optional `research_used`: [{"id": 3, "items": [1, 2]}] for findings from <research_findings> you just added to the document (`id` from [R3], item numbers as listed).
+Optional `research_used`: [{"id": 3, "items": [1, 2]}] for findings from <research_findings> you just added to the document (`id` from [R3], item numbers as listed). A finding with an "Answer:" line is a quick explanation: when someone asks for it ("add that explanation"), write it in as a short point (with its source link, if listed) and give its id with no items.
 
 Optional `speaker_names`: [{"from": "Speaker 2", "to": "Ana"}] gives an auto-labelled speaker a real name, only when the transcript makes it near-certain, e.g. someone introduces themselves or is addressed by name and that labelled speaker answers. Also use it to correct a name's spelling when someone spells it out ({"from": "Claire", "to": "Clare"}). Otherwise omit it.
 
@@ -103,7 +103,9 @@ SCHEMA = {
         },
         "research": {
             "type": "array",
-            "items": {"type": "object", "properties": {"label": {"type": "string"}, "question": {"type": "string"}}, "required": ["question"]},
+            "items": {"type": "object", "properties": {"label": {"type": "string"}, "question": {"type": "string"},
+                                                       "kind": {"type": "string", "enum": ["quick", "sources"]}},
+                      "required": ["question"]},
         },
     },
     "required": ["ops"],
@@ -168,7 +170,7 @@ class Scribe:
 
     async def edit(self, prompt: str, timeout: float = 120) -> tuple[dict, float]:
         """One live update: edits to apply to the document."""
-        hint = '{"ops": [...], "speaker_names": [{"from": "...", "to": "..."}], "ack": "...", "show": "## ...", "research": [{"label": "...", "question": "..."}]}'
+        hint = '{"ops": [...], "speaker_names": [{"from": "...", "to": "..."}], "ack": "...", "show": "## ...", "research": [{"label": "...", "question": "...", "kind": "quick"}]}'
         return await self.backend.json(SYSTEM, SCHEMA, prompt, effort=self.effort, timeout=timeout, hint=hint)
 
     async def rewrite(self, prompt: str, timeout: float = 240) -> tuple[dict, float]:

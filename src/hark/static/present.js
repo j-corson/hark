@@ -21,6 +21,9 @@
     elsewhere: null, // {names, t}: sections Claude changed while another one was held
     ws: null,
     shown: null, nav: [],
+    research: new Map(), // id -> look-up job, for quick answers
+    popped: new Set(), // quick answers already shown (or done before this screen opened)
+    lookup: null, // {id, until}: the quick answer on screen now
   };
 
   // ---------------------------------------------------------------- socket
@@ -43,6 +46,9 @@
       }
       st.mode = m.session.mode; st.doc = m.session.doc; st.stage = m.stage || null;
       st.sections = new Set(m.sections || []);
+      st.research = new Map((m.session.research || []).map((j) => [j.id, j]));
+      for (const j of st.research.values()) if (j.state === "done") st.popped.add(`${st.sid}:${j.id}`);
+      renderLooking();
       render();
     } else if (m.type === "doc") {
       const old = st.doc;
@@ -55,6 +61,16 @@
       st.stage = m.heading || null;
       if (!st.stage) st.elsewhere = null;
       render();
+    } else if (m.type === "research") {
+      const j = m.job;
+      st.research.set(j.id, j);
+      const key = `${st.sid}:${j.id}`;
+      if (j.kind === "quick" && j.state === "done" && j.answer && !st.popped.has(key)) { st.popped.add(key); showLookup(j); }
+      renderLooking();
+    } else if (m.type === "research_removed") {
+      st.research.delete(m.id);
+      if (st.lookup && st.lookup.id === m.id) hideLookup();
+      renderLooking();
     } else if (m.type === "status") {
       const on = (m.listening || []).length > 0;
       if (!$("live").classList.contains("lost")) { $("live").hidden = !on; $("live").textContent = "Listening"; }
@@ -371,6 +387,53 @@
     if (el.innerHTML !== html) el.innerHTML = html;
     el.hidden = false;
   }
+  // ---------------------------------------------------------------- quick look-ups
+  // A quick answer pops up over the notes for long enough to read it aloud, then goes.
+  // Requests for sources stay in the Research panel: a reading list doesn't read across a room.
+  function renderLooking() {
+    const busy = [...st.research.values()].filter((j) => j.kind === "quick" && (j.state === "queued" || j.state === "running"));
+    const el = $("looking");
+    el.hidden = !busy.length;
+    if (busy.length) el.textContent = `Looking up: ${busy[busy.length - 1].label || busy[busy.length - 1].q}`;
+  }
+  let lookupTimer;
+  function showLookup(j) {
+    const it = j.items && j.items[0];
+    let host = "";
+    try { host = it && it.url ? new URL(it.url).hostname.replace(/^www\./, "") : ""; } catch (_) { /* not a URL */ }
+    const src = it ? `Source: ${esc(it.title)}${host ? ` <span class="host">${esc(host)}</span>` : ""}`
+      : "From Claude's own knowledge, not checked against a source";
+    const el = $("lookup");
+    const answer = clip(j.answer, 700);
+    const more = answer !== j.answer ? '<span class="more"> The full answer is in the Research panel.</span>' : "";
+    el.innerHTML = `<p class="kicker">Quick look-up</p><h2>${esc(j.label || j.q)}</h2><p class="answer">${esc(answer)}${more}</p><p class="src">${src}</p>`;
+    el.hidden = false;
+    // A long answer gets smaller type rather than being cut off.
+    let s = 1;
+    el.style.setProperty("--lfit", s);
+    while (el.scrollHeight > el.clientHeight + 2 && s > 0.55) { s = +(s - 0.05).toFixed(2); el.style.setProperty("--lfit", s); }
+    el.classList.remove("enter"); void el.offsetWidth; el.classList.add("enter");
+    const words = answer.split(/\s+/).length;
+    const ms = Math.min(90000, Math.max(40000, 25000 + words * 400));
+    st.lookup = { id: j.id };
+    clearTimeout(lookupTimer);
+    lookupTimer = setTimeout(hideLookup, ms);
+  }
+  // Shorten to whole sentences (or whole words), as hark does for Claude.
+  function clip(text, limit) {
+    if (text.length <= limit) return text;
+    const cut = text.slice(0, limit);
+    const end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("? "), cut.lastIndexOf("! "));
+    if (end > limit / 2) return cut.slice(0, end + 1) + " …";
+    return cut.slice(0, cut.lastIndexOf(" ")).replace(/[,;:]$/, "") + " …";
+  }
+  function hideLookup() {
+    clearTimeout(lookupTimer);
+    st.lookup = null;
+    $("lookup").hidden = true;
+  }
+  const esc = (s) => String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
   function fullscreen() {
     if (document.fullscreenElement) document.exitFullscreen();
     else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
@@ -380,6 +443,7 @@
   $("nextBtn").onclick = () => step(1);
   $("followBtn").onclick = follow;
   $("fsBtn").onclick = fullscreen;
+  $("lookup").onclick = hideLookup;
   $("rail").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-head]");
     if (b) setStage(decodeURIComponent(b.dataset.head));
@@ -392,6 +456,7 @@
     else if (e.key === "ArrowRight" || e.key === "PageDown") { e.preventDefault(); step(1); }
     else if (e.key === "l" || e.key === "L" || e.key === "Home") { e.preventDefault(); follow(); }
     else if (e.key === "f" || e.key === "F") { e.preventDefault(); fullscreen(); }
+    else if (e.key === "Escape" && st.lookup) { e.preventDefault(); hideLookup(); }
   });
 
   // Controls fade out when the mouse is still, so the screen stays clean.

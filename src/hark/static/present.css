@@ -115,6 +115,21 @@ button { font: inherit; color: inherit; cursor: pointer; border: 0; background: 
 .agreed span { font-size: .72em; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; opacity: .8; margin-right: .5em; }
 .agreed a { color: inherit; }
 
+/* a quick look-up, over the notes */
+.looking { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.looking::before { content: ""; display: inline-block; width: .55em; height: .55em; border-radius: 50%; background: var(--act); margin-right: .5em; animation: pulse 1s ease-in-out infinite; }
+.lookup { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(88vw, 38em); max-height: 84dvh; overflow: hidden;
+  z-index: 7; cursor: pointer; background: var(--sheet); border-radius: .5em; border-top: .25em solid var(--act);
+  padding: .9em 1.3em 1em; font-size: calc(var(--u) * .95 * var(--lfit, 1));
+  box-shadow: 0 0 0 100vmax color-mix(in srgb, var(--desk) 55%, transparent), 0 .6em 2em rgb(0 0 0 / 22%); }
+.lookup.enter { animation: pop .35s ease-out; }
+@keyframes pop { from { opacity: 0; transform: translate(-50%, calc(-50% + .4em)); } }
+.lookup h2 { font-size: 1.3em; line-height: 1.2; margin: 0 0 .4em; }
+.lookup .answer { margin: 0 0 .6em; line-height: 1.4; }
+.lookup .answer .more { color: var(--muted); font-size: .75em; }
+.lookup .src { margin: 0; font-size: .62em; color: var(--muted); }
+.lookup .host { margin-left: .4em; opacity: .8; }
+
 /* the highlighter, drying over ~25s, as on the main page */
 .fresh { animation: dry 25s ease-out forwards; animation-delay: var(--age, 0s); }
 @keyframes dry {
@@ -140,7 +155,8 @@ button { font: inherit; color: inherit; cursor: pointer; border: 0; background: 
   .top { padding: .7em 16px .2em; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .card.enter, .agreed { animation: none; }
+  .card.enter, .agreed, .lookup.enter { animation: none; }
+  .looking::before { animation: none; }
   .fresh { animation-timing-function: steps(1, end); }
   .live::before { animation: none; }
 }

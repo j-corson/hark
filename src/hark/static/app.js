@@ -467,11 +467,12 @@
     else if (act === "edit") openRaw();
     else if (act === "update") { send({ type: "update_now" }); toast("Asked Claude to update now."); }
     else if (act === "copy") {
-      try { await navigator.clipboard.writeText(st.doc); toast("Copied the document as Markdown."); }
+      const text = withResearch(st.doc);
+      try { await navigator.clipboard.writeText(text); toast(text === st.doc ? "Copied the document as Markdown." : "Copied the document as Markdown, with the research at the end."); }
       catch (_) { toast("This browser won't allow copying here. Use Download .md instead."); }
     } else if (act === "download") {
       const a = document.createElement("a");
-      a.href = URL.createObjectURL(new Blob([st.doc], { type: "text/markdown" }));
+      a.href = URL.createObjectURL(new Blob([withResearch(st.doc)], { type: "text/markdown" }));
       a.download = fileName(".md");
       a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     } else if (act === "share") {
@@ -520,9 +521,27 @@
   }
   // Android Chrome won't share .md files, so fall back to .txt there.
   function shareFile() {
-    const md = new File([st.doc], fileName(".md"), { type: "text/markdown" });
+    const text = withResearch(st.doc);
+    const md = new File([text], fileName(".md"), { type: "text/markdown" });
     if (navigator.canShare && navigator.canShare({ files: [md] })) return md;
-    return new File([st.doc], fileName(".txt"), { type: "text/plain" });
+    return new File([text], fileName(".txt"), { type: "text/plain" });
+  }
+  // Exports carry this session's look-ups after the notes, so they aren't lost with the panel.
+  function withResearch(doc) {
+    const done = st.research.filter((j) => j.state === "done" && (j.answer || j.items.length));
+    if (!done.length) return doc;
+    const one = (s) => String(s || "").replace(/\s+/g, " ").trim();
+    let out = doc.replace(/\s+$/, "") + "\n\n---\n\n## Research\n";
+    for (const j of done) {
+      out += `\n### ${one(j.label || j.q)}\n\n`;
+      if (j.answer) out += one(j.answer) + "\n\n";
+      for (const it of j.items) {
+        const u = safeUrl(it.url);
+        out += `- ${u ? `[${one(it.title)}](${u})` : one(it.title)}${it.note ? `: ${one(it.note)}` : ""}\n`;
+      }
+      if (j.kind === "quick" && !j.items.length) out += "_From Claude's own knowledge, without a source._\n";
+    }
+    return out;
   }
   async function share(data) {
     try { await navigator.share(data); }
@@ -595,7 +614,7 @@
   const ORIGIN = { conversation: "Picked up by Claude", typed: "Typed here" };
   function researchMeta(j) {
     const when = fmtTime(j.created);
-    const how = `${ORIGIN[j.origin] || ""} · ${when}`;
+    const how = `${{ quick: "Quick look-up · ", sources: "Sources · " }[j.kind] || ""}${ORIGIN[j.origin] || ""} · ${when}`;
     if (j.state === "proposed") return `${how} · Not started`;
     if (j.state === "queued") return `${how} · Waiting for a free slot`;
     if (j.state === "running") return `Researching… ${Math.max(0, Math.round(Date.now() / 1000 - (j.started || j.created)))}s`;
@@ -609,7 +628,13 @@
     li.className = `rcard ${j.state}` + (st.unseen.has(j.id) ? " unseen" : "");
     li.dataset.id = j.id;
     let h = `<div class="rq" title="${esc(j.q)}">${esc(j.label || j.q)}</div><div class="rmeta">${esc(researchMeta(j))}</div>`;
-    if (j.state === "done") {
+    const quick = j.kind === "quick";
+    if (j.state === "done" && quick) {
+      if (j.answer) h += `<p class="ranswer quick">${esc(j.answer)}</p>`;
+      const it = j.items[0], u = it && safeUrl(it.url);
+      h += it ? `<p class="rsource">Source: ${u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(it.title)}</a>` : esc(it.title)}</p>`
+        : '<p class="rsource">From Claude\'s own knowledge, not checked against a source.</p>';
+    } else if (j.state === "done") {
       if (j.answer) h += `<p class="ranswer">${esc(j.answer)}</p>`;
       if (j.items.length) {
         h += '<ul class="ritems">';
@@ -626,7 +651,11 @@
     const acts = [];
     if (j.state === "proposed") acts.push(["run", "Research this", true], ["dismiss", "Dismiss"]);
     else if (j.state === "queued" || j.state === "running") acts.push(["cancel", "Cancel"]);
-    else if (j.state === "done") {
+    else if (j.state === "done" && quick) {
+      if (j.answer && !j.added) acts.push(["addall", "Add to document", true]);
+      if (!j.deeper) acts.push(["sources", "Find sources"]);
+      acts.push(["dismiss", "Dismiss"]);
+    } else if (j.state === "done") {
       if (j.items.some((it) => !it.added)) acts.push(["addall", "Add all to document", true]);
       acts.push(["dismiss", "Dismiss"]);
     } else acts.push(["run", "Try again"], ["dismiss", "Dismiss"]);
@@ -653,7 +682,11 @@
     if (!b) return;
     const id = +b.closest(".rcard").dataset.id, a = b.dataset.ract;
     if (a === "add") { send({ type: "research_add", id, items: [+b.dataset.i] }); toast("Claude is adding that to the document."); }
-    else if (a === "addall") { send({ type: "research_add", id, items: null }); toast("Claude is adding these to the document."); }
+    else if (a === "addall") {
+      const j = st.research.find((x) => x.id === id);
+      send({ type: "research_add", id, items: null });
+      toast(j && j.kind === "quick" ? "Claude is adding that to the document." : "Claude is adding these to the document.");
+    } else if (a === "sources") { send({ type: "research_sources", id }); toast("Looking for sources on that."); }
     else send({ type: `research_${a}`, id });
   });
   $("askForm").onsubmit = (e) => {

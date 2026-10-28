@@ -105,9 +105,9 @@ class Session:
         self.lines.append(line)
         return line
 
-    def add_research(self, question: str, origin: str, state: str, label: str = "") -> dict:
+    def add_research(self, question: str, origin: str, state: str, label: str = "", kind: str = "sources") -> dict:
         job = {"id": self._next_research, "q": question.strip()[:500], "label": label.strip()[:120] or question.strip()[:120],
-               "origin": origin, "state": state,
+               "origin": origin, "state": state, "kind": kind if kind in ("quick", "sources") else "sources",
                "created": time.time(), "answer": "", "items": [], "error": "", "took": 0}
         self._next_research += 1
         self.research.append(job)
@@ -212,6 +212,8 @@ def research_markdown(title: str, jobs: list[dict]) -> str:
         out += [f"## {j.get('label') or j['q']}", "", f"_{j['q']}_", ""]
         if j.get("answer"):
             out += [j["answer"], ""]
+        if j.get("kind") == "quick" and not j.get("items"):
+            out += ["_Answered from Claude's own knowledge, without a source._", ""]
         for it in j.get("items", []):
             link = f" <{it['url']}>" if it.get("url") else ""
             out.append(f"- **{it['title']}**{link}" + (f": {it['note']}" if it.get("note") else ""))

@@ -145,6 +145,10 @@ select { background: transparent; border: 1px solid var(--line); border-radius: 
 .rcard.running .rmeta::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--act); margin-right: 6px; animation: pulse 1s ease-in-out infinite; }
 .rcard.error .rmeta { color: var(--err); }
 .ranswer { margin: 8px 0 4px; }
+.ranswer.quick { font-size: 16px; }
+.rsource { margin: 4px 0 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.rsource a { color: var(--act); text-decoration: none; }
+.rsource a:hover { text-decoration: underline; }
 .ritems { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 8px; }
 .ritems li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: start; }
 .ritems .t { font-weight: 600; overflow-wrap: anywhere; }

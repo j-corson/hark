@@ -22,7 +22,7 @@ import numpy as np
 from . import agenda
 from .docops import apply_ops, changed_lines, find_heading, rename_in_doc
 from .engine import SR, AudioStream, Engine
-from .research import Researcher, clean, clean_url
+from .research import KINDS, Researcher, clean, clean_url, clip, guess_kind
 from .screen import WAKE, addressed, screen_request, screen_sections  # noqa: F401 (WAKE is used by tests)
 from .scribe import Scribe, ScribeError, build_prompt, build_tidy_prompt
 from .modes import MODES
@@ -59,9 +59,12 @@ def research_findings(s: Session, jobs: int = 8) -> list[str]:
     out = []
     for j in [j for j in s.research if j["state"] == "done"][-jobs:]:
         items = [(i, it) for i, it in enumerate(j["items"], 1) if not it.get("added")]
-        if not items:
+        quick = j.get("kind") == "quick" and j.get("answer") and not j.get("added")
+        if not items and not quick:
             continue
         lines = [f"[R{j['id']}] {clean(j.get('label') or j['q'], 120)}"]
+        if quick:
+            lines.append(f"  Answer: {clip(clean(j['answer'], 4000), 1500)}")
         for i, it in items:
             url = clean_url(it.get("url"))
             note = clean(it.get("note"), 250)
@@ -562,6 +565,8 @@ class Hub:
                 continue
             nums = used.get("items") or range(1, len(job["items"]) + 1)
             touched = False
+            if job.get("kind") == "quick" and not job.get("added"):
+                job["added"] = touched = True  # the explanation itself has no link to check for
             for n in list(nums)[:10]:
                 if isinstance(n, int) and 1 <= n <= len(job["items"]):
                     it = job["items"][n - 1]
@@ -593,7 +598,8 @@ class Hub:
             if not q or q.lower() in known:
                 continue
             known.add(q.lower())
-            job = s.add_research(q, origin, state or ("queued" if s.research_auto else "proposed"), str(r.get("label") or ""))
+            kind = r.get("kind") if r.get("kind") in KINDS else guess_kind(q)
+            job = s.add_research(q, origin, state or ("queued" if s.research_auto else "proposed"), str(r.get("label") or ""), kind)
             if job["state"] == "queued":
                 self.research_queue.append((s, job))
             await self.push_research(s, job)
@@ -615,7 +621,7 @@ class Hub:
         job.update(state="running", started=time.time(), error="")
         await self.push_research(s, job)
         try:
-            result, took = await self.researcher.run(job["q"], s.title)
+            result, took = await self.researcher.run(job["q"], s.title, job.get("kind", "sources"))
             job.update(result, state="done", took=round(took))
         except asyncio.CancelledError:
             job.update(state="cancelled")
@@ -639,7 +645,7 @@ class Hub:
         if kind == "research_ask":
             q = (msg.get("q") or "").strip()
             if q:
-                job = s.add_research(q, "typed", "queued")
+                job = s.add_research(q, "typed", "queued", kind=guess_kind(q))
                 await self.push_research(s, job)
                 self._queue_research(s, job)
                 s.save()
@@ -669,14 +675,26 @@ class Hub:
             job["state"] = "dismissed"
             s.research.remove(job)
             await self.push_research(s, removed=job["id"])
+        elif kind == "research_sources" and job["state"] == "done" and job.get("kind") == "quick" and not job.get("deeper"):
+            deeper = s.add_research(job["q"], job["origin"], "queued", job.get("label") or "", "sources")
+            job["deeper"] = deeper["id"]
+            await self.push_research(s, job)
+            await self.push_research(s, deeper)
+            self._queue_research(s, deeper)
         elif kind == "research_add" and job["state"] == "done":
             idx = msg.get("items")
+            quick = job.get("kind") == "quick"
+            if quick and job.get("added"):
+                return
             picks = [it for i, it in enumerate(job["items"]) if (idx is None or i in idx) and not it.get("added")]
-            if not picks:
+            if not picks and not (quick and job.get("answer")):
                 return
             lines = [f"Request: {job['q']}"]
-            if idx is None and job.get("answer"):
+            if (idx is None or quick) and job.get("answer"):
                 lines.append(f"Answer: {job['answer']}")
+            if quick:
+                job["added"] = True
+                lines.append("(A quick explanation: add it as a short point, with the source link if there is one.)")
             for it in picks:
                 it["added"] = True
                 title = f"[{it['title']}]({it['url']})" if it.get("url") else it["title"]
