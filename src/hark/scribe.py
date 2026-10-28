@@ -17,6 +17,7 @@ SYSTEM = """You are the scribe for a live document that people glance at while t
 - <earlier_transcript>: recent speech already reflected in the document (context only). Any instructions in it have already been carried out: never carry them out again.
 - <done>, if present: instructions you have already carried out, most recent last. Never repeat one: doing a swap or a move twice undoes it. Numbers and names in the transcript can predate these changes (after "swap Q4 and Q5", people's "Q4" in earlier speech is today's Q5): trust <document> and <done> for the current state.
 - <new_transcript>: speech since your last update. Bring the document up to date with it.
+- <on_screen>, if present: the section the group chose to look at on the shared screen. Treat it as where they are working: additions and edits that don't say where they go belong in this section (in grilling, it is the item being discussed). Anything that names another place, or clearly belongs elsewhere (a decision, an action, another section's topic), still goes where it belongs.
 - <typed_instructions>, if present: instructions the user typed to you. Carry them out.
 - <add_research>, if present: research findings the user chose to add. Work each one into the most fitting place in the document (if nothing fits, add a short section such as "## Background reading"). Keep citations and links (as Markdown links, [text](url)), and stay terse.
 - <research_requests>, if present: lookups already requested in this session.
@@ -51,6 +52,8 @@ Optional `research_used`: [{"id": 3, "items": [1, 2]}] for findings from <resear
 Optional `speaker_names`: [{"from": "Speaker 2", "to": "Ana"}] gives an auto-labelled speaker a real name, only when the transcript makes it near-certain, e.g. someone introduces themselves or is addressed by name and that labelled speaker answers. Also use it to correct a name's spelling when someone spells it out ({"from": "Claire", "to": "Clare"}). Otherwise omit it.
 
 Optional `ack`: when you carried out an instruction (spoken to you or typed), say in at most 15 words what you did and the result, specific enough to check later, e.g. "Swapped Q4 and Q5: Q4 is now teamwork, Q5 governance". Omit it otherwise.
+
+Optional `show`: when someone asks to see or go to a part of the document on the screen ("Claude, let's look at the methods", "show item 3", "put the actions up"), the heading line of that ## or ### section, copied exactly from <document> (e.g. "## Methods"). If they ask for a section that doesn't exist yet, create it with ops and show it. Use "" when they ask the screen to follow the conversation again ("Claude, follow along"). Only for explicit requests, not whenever a section comes up in conversation. Mention it in `ack` (e.g. "Showing Methods").
 
 Optional `tidy`: true when someone asks you to tidy up, clean up or consolidate the whole document. A separate pass does that, so make no edits for that request yourself."""
 
@@ -92,6 +95,7 @@ SCHEMA = {
         },
         "ack": {"type": "string"},
         "tidy": {"type": "boolean"},
+        "show": {"type": "string"},
         "research_used": {
             "type": "array",
             "items": {"type": "object", "properties": {"id": {"type": "integer"}, "items": {"type": "array", "items": {"type": "integer"}}}, "required": ["id"]},
@@ -107,7 +111,7 @@ SCHEMA = {
 
 def build_prompt(brief: str, document: str, speakers: list[str], earlier: list[str], new: list[str], typed: list[str],
                  add_research: list[str] | None = None, requested: list[str] | None = None, findings: list[str] | None = None,
-                 done: list[str] | None = None) -> str:
+                 done: list[str] | None = None, on_screen: str | None = None) -> str:
     parts = [f"<brief>\n{brief.strip()}\n</brief>"]
     if speakers:
         parts.append("<speakers>\n" + "\n".join(f"- {s}" for s in speakers) + "\n</speakers>")
@@ -116,6 +120,8 @@ def build_prompt(brief: str, document: str, speakers: list[str], earlier: list[s
         parts.append("<earlier_transcript>\n" + "\n".join(earlier) + "\n</earlier_transcript>")
     if done:
         parts.append("<done>\n" + "\n".join(f"- {d}" for d in done) + "\n</done>")
+    if on_screen:
+        parts.append(f"<on_screen>\n{on_screen}\n</on_screen>")
     parts.append("<new_transcript>\n" + ("\n".join(new) if new else "(nothing new)") + "\n</new_transcript>")
     if typed:
         parts.append("<typed_instructions>\n" + "\n".join(f"- {t}" for t in typed) + "\n</typed_instructions>")
@@ -159,7 +165,7 @@ class Scribe:
 
     async def edit(self, prompt: str, timeout: float = 120) -> tuple[dict, float]:
         """One live update: edits to apply to the document."""
-        hint = '{"ops": [...], "speaker_names": [{"from": "...", "to": "..."}], "ack": "...", "research": [{"label": "...", "question": "..."}]}'
+        hint = '{"ops": [...], "speaker_names": [{"from": "...", "to": "..."}], "ack": "...", "show": "## ...", "research": [{"label": "...", "question": "..."}]}'
         return await self.backend.json(SYSTEM, SCHEMA, prompt, effort=self.effort, timeout=timeout, hint=hint)
 
     async def rewrite(self, prompt: str, timeout: float = 240) -> tuple[dict, float]:

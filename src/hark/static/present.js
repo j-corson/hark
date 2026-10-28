@@ -1,6 +1,7 @@
 // hark room screen: a read-only, big-type view of whatever the group is on right now.
 // It follows the conversation by watching which part of the document last changed,
-// and never sends anything back except nothing: no audio, no edits.
+// A section chosen by hand or by voice is held on every screen (hark keeps that choice
+// and tells Claude, which then puts new points there). It never sends audio or edits.
 (function () {
   const $ = (id) => document.getElementById(id);
   const { blocks, inline } = window.MD;
@@ -15,14 +16,16 @@
     touched: new Map(), // section key -> when it last changed
     fresh: new Map(), // line text -> when it appeared
     agreed: [], // new lines in Decisions / Actions: {text, kind, t}
-    pin: null, // section key chosen by hand; null means follow the conversation
+    stage: null, // heading line held on screen by choice, kept by hark for every screen; null = follow the talk
+    elsewhere: null, // {names, t}: sections Claude changed while another one was held
+    ws: null,
     shown: null, nav: [],
   };
 
   // ---------------------------------------------------------------- socket
   let retry = 0;
   function connect() {
-    const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+    const ws = (st.ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`));
     ws.onopen = () => { retry = 0; $("live").classList.remove("lost"); };
     ws.onmessage = (e) => onMessage(JSON.parse(e.data));
     ws.onclose = () => {
@@ -35,14 +38,19 @@
     if (m.type === "state") {
       if (m.session.id !== st.sid) {
         st.sid = m.session.id;
-        st.touched.clear(); st.fresh.clear(); st.agreed = []; st.pin = null;
+        st.touched.clear(); st.fresh.clear(); st.agreed = []; st.elsewhere = null;
       }
-      st.mode = m.session.mode; st.doc = m.session.doc;
+      st.mode = m.session.mode; st.doc = m.session.doc; st.stage = m.stage || null;
       render();
     } else if (m.type === "doc") {
       const old = st.doc;
       st.doc = m.doc;
+      if ("stage" in m) st.stage = m.stage || null;
       if (m.by !== "tidy") noteChanges(old, m.doc);
+      render();
+    } else if (m.type === "stage") {
+      st.stage = m.heading || null;
+      if (!st.stage) st.elsewhere = null;
       render();
     } else if (m.type === "status") {
       const on = (m.listening || []).length > 0;
@@ -71,6 +79,8 @@
     return { lines, heads, title: h1 ? h1.text : "" };
   }
 
+  const headLine = (P, h) => P.lines[h.start].trim();
+  const heldIn = (P) => (st.stage ? P.heads.find((h) => h.level >= 2 && h.level <= 3 && headLine(P, h) === st.stage) || null : null);
   const parentName = (h) => (h.parent && h.parent.level === 2 ? norm(h.parent.text) : "");
   const hasChildren = (P, h) => P.heads.some((x) => x.parent === h);
 
@@ -106,7 +116,8 @@
     const P = parse(newDoc), now = Date.now();
     const seen = new Map();
     for (const l of oldDoc.split("\n")) { const k = l.trim(); if (k) seen.set(k, (seen.get(k) || 0) + 1); }
-    const keys = new Set(), agreed = [];
+    const keys = new Set(), agreed = [], away = new Set();
+    const held = heldIn(P);
     P.lines.forEach((l, i) => {
       const k = l.trim();
       if (!k) return;
@@ -114,10 +125,12 @@
       st.fresh.set(k, now);
       const h = sectionAt(P, i);
       if (h) keys.add(h.key);
+      if (held && h && h !== held && !(held.start <= i && i < held.end)) away.add(h.text);
       const top = topSection(P, i);
       if ((top === "decisions" || top === "actions") && /^\s*[-*+]|^\s*\d+[.)]/.test(l)) agreed.push({ text: l, kind: top, t: now });
     });
     if (keys.size <= BULK) for (const k of keys) st.touched.set(k, now);
+    if (away.size && keys.size <= BULK) st.elsewhere = { names: [...away], t: now };
     if (agreed.length <= 4) st.agreed = st.agreed.concat(agreed).slice(-6);
   }
 
@@ -140,11 +153,8 @@
   }
 
   function pick(P, nav) {
-    if (st.pin) {
-      const h = nav.find((x) => x.key === st.pin);
-      if (h) return h;
-      st.pin = null;
-    }
+    const held = heldIn(P);
+    if (held) return held;
     const cands = nav.filter((h) => eligible(P, h));
     const grilling = st.mode === "grill" ? cands.filter((h) => itemStatus(P, h) === "being grilled") : [];
     const pool = grilling.length ? grilling : cands;
@@ -291,7 +301,7 @@
     return "<ol>" + list.map((h) => {
       const s = st.mode === "grill" ? itemStatus(P, h) : "";
       const cls = [h === focus ? "cur" : "", /^ready/.test(s) ? "ready" : "", /^parked/.test(s) ? "parked" : ""].filter(Boolean).join(" ");
-      return `<li class="${cls}"><button type="button" data-key="${encodeURIComponent(h.key)}">${inline(h.text)}</button></li>`;
+      return `<li class="${cls}"><button type="button" data-head="${encodeURIComponent(headLine(P, h))}">${inline(h.text)}</button></li>`;
     }).join("") + "</ol>";
   }
 
@@ -325,8 +335,11 @@
     }
     renderRail(P, focus, nav);
     renderAgreed(P);
-    $("followBtn").textContent = st.pin ? "Follow live" : "Following";
-    $("followBtn").classList.toggle("off", !!st.pin);
+    const held = !!heldIn(P);
+    $("followBtn").textContent = held ? "Follow live" : "Following";
+    $("followBtn").classList.toggle("off", held);
+    $("held").hidden = !held;
+    renderElsewhere();
     $("prevBtn").hidden = $("nextBtn").hidden = nav.length < 2;
     fit();
   }
@@ -337,7 +350,7 @@
     let s = 1;
     c.style.setProperty("--fit", s);
     while (c.scrollHeight > c.clientHeight + 2 && s > 0.62) { s = +(s - 0.06).toFixed(2); c.style.setProperty("--fit", s); }
-    if (c.scrollHeight > c.clientHeight + 2 && !st.pin) {
+    if (c.scrollHeight > c.clientHeight + 2 && !st.stage) {
       const f = c.querySelector(".fresh");
       if (f) c.scrollTop = Math.max(0, f.offsetTop - c.clientHeight / 3);
     }
@@ -349,10 +362,24 @@
     if (!nav.length) return;
     const i = nav.findIndex((h) => h.key === st.shown);
     const j = Math.max(0, Math.min(nav.length - 1, (i < 0 ? 0 : i) + d));
-    st.pin = nav[j].key;
+    setStage(headLine(st.P, nav[j]));
+  }
+  // Every screen shows the same thing, so the choice goes to hark (shown here straight away).
+  function setStage(heading) {
+    st.stage = heading; st.elsewhere = null;
+    if (st.ws && st.ws.readyState === 1) st.ws.send(JSON.stringify({ type: "stage", heading }));
     render();
   }
-  function follow() { st.pin = null; render(); }
+  function follow() { setStage(null); }
+
+  function renderElsewhere() {
+    const el = $("elsewhere"), e = st.elsewhere;
+    if (!e || Date.now() - e.t > 12000 || !st.stage) { el.hidden = true; st.elsewhere = null; return; }
+    const names = e.names.slice(0, 2).map((n) => inline(n.replace(/^\d+[.)]\s*/, ""))).join(", ");
+    const html = `✓ Also changed: ${names}`;
+    if (el.innerHTML !== html) el.innerHTML = html;
+    el.hidden = false;
+  }
   function fullscreen() {
     if (document.fullscreenElement) document.exitFullscreen();
     else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
@@ -363,10 +390,8 @@
   $("followBtn").onclick = follow;
   $("fsBtn").onclick = fullscreen;
   $("rail").addEventListener("click", (e) => {
-    const b = e.target.closest("button[data-key]");
-    if (!b) return;
-    st.pin = decodeURIComponent(b.dataset.key);
-    render();
+    const b = e.target.closest("button[data-head]");
+    if (b) setStage(decodeURIComponent(b.dataset.head));
   });
   document.addEventListener("fullscreenchange", () => { $("fsBtn").textContent = document.fullscreenElement ? "Exit full screen" : "Full screen"; });
   document.addEventListener("keydown", (e) => {
@@ -389,6 +414,14 @@
   wake();
 
   window.addEventListener("resize", fit);
-  setInterval(() => { if (st.agreed.length) renderAgreed(st.P || parse(st.doc)); }, 5000);
+  $("elsewhere").onclick = () => {
+    const n = st.elsewhere && st.elsewhere.names[0], P = st.P;
+    const h = n && P && P.heads.find((x) => x.text === n);
+    if (h) setStage(headLine(P, h));
+  };
+  setInterval(() => {
+    if (st.agreed.length) renderAgreed(st.P || parse(st.doc));
+    if (st.elsewhere) renderElsewhere();
+  }, 3000);
   connect();
 })();

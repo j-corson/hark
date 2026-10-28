@@ -20,9 +20,10 @@ from pathlib import Path
 import numpy as np
 
 from . import agenda
-from .docops import apply_ops, changed_lines, rename_in_doc
+from .docops import apply_ops, changed_lines, find_heading, rename_in_doc
 from .engine import SR, AudioStream, Engine
 from .research import Researcher, clean, clean_url
+from .screen import WAKE, screen_request  # speech addressed to Claude skips the wait
 from .scribe import Scribe, ScribeError, build_prompt, build_tidy_prompt
 from .modes import MODES
 from .session import Session, list_sessions
@@ -32,9 +33,9 @@ SOURCES = {0: "mic", 1: "call", 2: "replay"}
 CONTEXT_LINES = 12
 ERROR_BACKOFF = 20
 MAX_RESEARCH = 2  # lookups running at once; more wait their turn
-WAKE = re.compile(r"\b(claude|clawed|claud)\b", re.I)  # speech addressed to Claude skips the wait
 WAKE_PAUSE = 1.2  # ...once the sentence is finished
 WAKE_WAIT = 4.0  # ...or after this long a pause, punctuation or not
+HEADING_TEXT = re.compile(r"^#+\s+(.*)$")
 SENTENCE_END = re.compile(r"[.?!][\"')\]]*\s*$")
 DONE_KEPT = 6  # how many of Claude's recent "what I did" notes it is reminded of
 TIDY_MIN_LINES = 12  # don't bother tidying a document shorter than this on Stop
@@ -132,7 +133,7 @@ class Hub:
         await self.broadcast(self.status())
 
     async def push_state(self, ws=None) -> None:
-        msg = {"type": "state", "session": self.session.public(), "sessions": list_sessions(self.data_dir)}
+        msg = {"type": "state", "session": self.session.public(), "sessions": list_sessions(self.data_dir), "stage": self.session.stage}
         if ws is None:
             await self.broadcast(msg)
         else:
@@ -142,8 +143,49 @@ class Hub:
     async def push_doc(self, changed: list[int] | None = None, by: str = "you") -> None:
         s = self.session
         s.save()
+        # The held section follows renumbering; if it's gone, the screen follows the talk again.
+        s.stage = find_heading(s.doc, s.stage)
         await self.broadcast({"type": "doc", "doc": s.doc, "version": s.version, "changed": changed or [],
-                              "by": by, "can_undo": bool(s.history), "title": s.title})
+                              "by": by, "can_undo": bool(s.history), "title": s.title, "stage": s.stage})
+
+    async def _screen_request(self, s: Session, line: dict) -> None:
+        """Switch the room screen straight away for a clear "Claude, show the methods", with no Claude call.
+        Claude still sees the line later, with a note that it was done, so it doesn't do it again."""
+        if s is not self.session:
+            return
+        tries = [[line]]
+        prev = s.lines[-2] if len(s.lines) > 1 else None
+        if (line["kind"] == "speech" and prev and prev["kind"] == "speech" and not prev.get("screen")
+                and line["added"] - prev["added"] < 8 and WAKE.search(prev["text"])):
+            tries.append([prev, line])  # "Claude," and the request can land in separate lines
+        for lines in tries:
+            req = screen_request(" ".join(l["text"] for l in lines), s.doc, need_wake=line["kind"] == "speech")
+            if req:
+                break
+        else:
+            return
+        kind, heading = req
+        if kind == "follow":
+            note = "The room screen follows the conversation again"
+        else:
+            m = HEADING_TEXT.match(heading or "")
+            note = f"Showing {m.group(1) if m else heading} on the room screen"
+        if heading != s.stage:
+            await self.set_stage(heading, "voice")
+            await self.broadcast({"type": "toast", "text": f"✓ {note}"})
+        for l in lines:
+            l["screen"] = True
+        s.done = (s.done + [f"[{time.strftime('%H:%M:%S')}] {note} (hark did this for you)"])[-DONE_KEPT:]
+
+    async def set_stage(self, heading: str | None, by: str) -> bool:
+        """Hold a section on the room screen (None: follow the conversation). False if no such section."""
+        s = self.session
+        found = find_heading(s.doc, heading)
+        if heading and not found:
+            return False
+        s.stage = found
+        await self.broadcast({"type": "stage", "heading": found, "by": by})
+        return True
 
     # -- connections --------------------------------------------------------
     async def connect(self, ws) -> None:
@@ -189,6 +231,7 @@ class Hub:
         sid = session.speakers.assign(emb, len(samples) / SR, st.last_speaker)
         st.last_speaker = sid
         line = session.add_line(t, st.source, sid, text)
+        await self._screen_request(session, line)
         session.save()
         if len(session.speakers.alias) != merges:
             await self.push_state()  # two speakers were merged: relabel earlier lines everywhere
@@ -257,11 +300,11 @@ class Hub:
         now = time.time()
         if now < self.retry_at and not self.force:
             return False
-        if self.force or any(l["kind"] == "typed" for l in pending):
+        if self.force or any(l["kind"] == "typed" and not l.get("screen") for l in pending):
             return True
         pause = now - pending[-1]["added"]
         finished = SENTENCE_END.search(pending[-1]["text"]) and pause >= WAKE_PAUSE
-        if (finished or pause >= WAKE_WAIT) and any(WAKE.search(l["text"]) for l in pending):
+        if (finished or pause >= WAKE_WAIT) and any(WAKE.search(l["text"]) and not l.get("screen") for l in pending):
             return True  # someone spoke to Claude: act on it now, not at the next interval
         since = now - self.last_call
         chars = sum(len(l["text"]) for l in pending)
@@ -281,7 +324,8 @@ class Hub:
         new = [s.fmt_line(l) for l in pending if l["kind"] == "speech"]
         typed = [l["text"] for l in pending if l["kind"] == "typed"]
         base = s.doc
-        prompt = build_prompt(s.brief, base, s.speaker_notes(), earlier, new, typed, adds, requested, findings, s.done[-DONE_KEPT:])
+        prompt = build_prompt(s.brief, base, s.speaker_notes(), earlier, new, typed, adds, requested, findings, s.done[-DONE_KEPT:],
+                              on_screen=s.stage)
         detail = f"{len(pending)} new line{'s' * (len(pending) != 1)}" if pending else ""
         if adds:
             detail = (detail + ", " if detail else "") + "adding research"
@@ -486,6 +530,9 @@ class Hub:
             await self.push_doc(changed_lines(old, s.doc), by="claude")
         else:
             s.save()
+        show = data.get("show")
+        if isinstance(show, str) and not await self.set_stage(show.strip() or None, "claude"):
+            log.info("asked to show %r, which isn't a section", show)
         # Findings Claude says it added by voice request. Only mark ones whose link or
         # title really went into the document, so the panel's Add buttons stay honest.
         written = "\n".join(str(o.get("text") or "") for o in ops if isinstance(o, dict))
@@ -653,8 +700,13 @@ class Hub:
             text = (msg.get("text") or "").strip()
             if text:
                 line = s.add_line(time.time(), "typed", s.speakers.named("You (typed)"), text, kind="typed")
+                await self._screen_request(s, line)
                 s.save()
                 await self.broadcast({"type": "line", "line": s.public_line(line), "speakers": s.speakers.public()})
+        elif kind == "stage":
+            heading = msg.get("heading")
+            if not await self.set_stage(heading if isinstance(heading, str) else None, "you"):
+                await self.send(ws, {"type": "stage", "heading": s.stage, "by": "you"})
         elif kind == "update_now":
             self.force = True
         elif kind == "tidy":

@@ -23,6 +23,32 @@ def _heading_key(line: str) -> str | None:
     return _norm(m.group(2)) if m else None
 
 
+def _loose(text: str) -> str:
+    """Heading text without emphasis or a leading number, so "### 3. **X**" matches "### 4. X"."""
+    return _norm(re.sub(r"^\d+[.)]\s*", "", re.sub(r"[*_`]", "", text)))
+
+
+def find_heading(doc: str, want: str | None) -> str | None:
+    """The ## or ### heading line in `doc` that `want` names (a heading line, or just its text).
+
+    An exact line wins; otherwise a unique match ignoring case, emphasis and numbering, so a
+    section still matches after it is renumbered. None if nothing (or more than one) matches."""
+    want = (want or "").strip()
+    if not want:
+        return None
+    heads = []
+    for line in doc.split("\n"):
+        m = HEADING.match(line.strip())
+        if m and 2 <= len(m.group(1)) <= 3:
+            heads.append((line.strip(), m.group(2)))
+    if any(line == want for line, _ in heads):
+        return want
+    m = HEADING.match(want)
+    key = _loose(m.group(2) if m else want)
+    hits = [line for line, text in heads if _loose(text) == key]
+    return hits[0] if len(hits) == 1 else None
+
+
 def _find_lines(lines: list[str], find: str) -> tuple[int, int] | None:
     """Locate `find` as a run of whole lines, ignoring whitespace and case.
 

@@ -56,6 +56,7 @@ class Session:
         self.research_auto = True  # start lookups people ask for out loud without asking first
         self._next_research = 1
         self.done: list[str] = []  # Claude's recent "what I did" notes, so it doesn't redo an instruction
+        self.stage: str | None = None  # heading line held on the room screen by choice; None = follow the talk
 
     # -- paths / naming -----------------------------------------------------
     @property

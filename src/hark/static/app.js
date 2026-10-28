@@ -10,6 +10,7 @@
     modes: {}, fresh: new Map(), editing: null, rawOpen: false, pendingRender: false,
     caps: {}, ctx: null, workletReady: null, wake: null, lastUserScroll: 0,
     research: [], unseen: new Set(), tab: "research", view: "doc", notesOpen: false,
+    stage: null, // heading held on the room screen; Claude puts new points there
   };
   const narrow = window.matchMedia("(max-width: 820px)");
 
@@ -34,7 +35,7 @@
   function onMessage(m) {
     if (m.type === "state") {
       st.session = m.session; st.sessions = m.sessions;
-      st.doc = m.session.doc; st.version = m.session.version;
+      st.doc = m.session.doc; st.version = m.session.version; st.stage = m.stage || null;
       st.lines = m.session.lines; st.speakers = m.session.speakers;
       $("modeSel").value = m.session.mode;
       $("undoBtn").disabled = !m.session.can_undo;
@@ -57,9 +58,13 @@
         for (const i of m.changed) if (ls[i] && ls[i].trim()) st.fresh.set(ls[i].trim(), now);
       }
       st.doc = m.doc; st.version = m.version;
+      if ("stage" in m) st.stage = m.stage || null;
       $("undoBtn").disabled = !m.can_undo;
       renderTitle(m.title);
       renderDoc(m.by === "claude");
+    } else if (m.type === "stage") {
+      st.stage = m.heading || null;
+      renderDoc(false);
     } else if (m.type === "line") {
       st.speakers = m.speakers;
       st.lines.push(m.line);
@@ -107,6 +112,13 @@
       const node = tmp.firstElementChild;
       node.dataset.start = b.start; node.dataset.end = b.end;
       if (inNotes) node.classList.add("wn");
+      if (b.kind === "h" && st.stage && lines[b.start].trim() === st.stage) {
+        node.classList.add("onstage");
+        const tag = document.createElement("button");
+        tag.type = "button"; tag.className = "quiet stagetag"; tag.textContent = "On screen ✕";
+        tag.title = "The room screen is held on this section, and Claude puts new points here. Click to let it follow the conversation again.";
+        node.appendChild(tag);
+      }
       if (idx === wn && wnEnd > wn + 1) {
         const n = bl.slice(wn + 1, wnEnd).filter((x) => x.kind === "li").length;
         const tg = document.createElement("button");
@@ -148,6 +160,7 @@
   $("doc").addEventListener("click", (e) => {
     if (e.target.closest("a")) return;
     if (e.target.closest(".wntoggle")) { st.notesOpen = !st.notesOpen; renderDoc(false); return; }
+    if (e.target.closest(".stagetag")) { send({ type: "stage", heading: null }); return; }
     const box = e.target.closest("input[type=checkbox]");
     const blk = e.target.closest("[data-start]");
     if (!blk || st.editing) return;

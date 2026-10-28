@@ -31,6 +31,9 @@ button { font: inherit; color: inherit; cursor: pointer; border: 0; background: 
 .top { display: flex; align-items: center; gap: 1em; padding: .7em 1.4em .2em; font-size: .62em; color: var(--muted); min-height: 2.6em; }
 .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .live { margin-left: auto; white-space: nowrap; }
+.held { white-space: nowrap; font-weight: 700; color: var(--act); border: 1px solid currentColor; border-radius: 99px; padding: .05em .7em; }
+.elsewhere { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; color: var(--ink); font-size: inherit;
+  background: color-mix(in srgb, var(--hl) 55%, transparent); border-radius: 99px; padding: .1em .8em; animation: enter .35s ease-out; }
 .live::before { content: ""; display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: #e0433c; margin-right: .5em; animation: pulse 1.6s ease-in-out infinite; }
 .live.lost::before { background: var(--muted); animation: none; }
 @keyframes pulse { 50% { opacity: .35; } }

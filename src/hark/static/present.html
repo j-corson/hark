@@ -13,6 +13,8 @@
 <body>
 <header class="top">
   <span id="title" class="title"></span>
+  <span id="held" class="held" hidden title="Chosen by hand or by voice. Claude puts new points here. Press L to follow the conversation again.">Held here</span>
+  <button id="elsewhere" class="elsewhere" type="button" hidden></button>
   <span id="live" class="live" hidden>Listening</span>
 </header>
 
@@ -25,9 +27,9 @@
 
 <footer class="controls">
   <button id="prevBtn" type="button" title="Previous section (←)">‹</button>
-  <button id="followBtn" type="button" title="Follow the conversation (F)">Following</button>
+  <button id="followBtn" type="button" title="Follow the conversation (L)">Following</button>
   <button id="nextBtn" type="button" title="Next section (→)">›</button>
-  <button id="fsBtn" type="button" title="Full screen (Enter)">Full screen</button>
+  <button id="fsBtn" type="button" title="Full screen (F)">Full screen</button>
 </footer>
 
 <script src="/static/md.js"></script>

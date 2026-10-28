@@ -115,8 +115,15 @@ It follows the conversation by itself, moving to whichever part of the document 
 
 - **More → Room screen** opens it in a new window. Drag that window onto the projector and press **F** for full screen. In a Teams call, share that window.
 - For a separate device such as a room PC or a smart TV, start hark with `--lan` and open the **Room screen** link it prints.
-- **←** and **→** (or a presentation clicker) step through sections by hand. The screen then stays where you put it until you press **L** or **Follow live**.
 - The buttons fade away when the mouse is still.
+
+### Holding a section on screen
+
+You can choose what's on screen yourself. Click a section in the list beside it, use **←** and **→** (or a presentation clicker), or ask out loud: "Claude, let's look at the methods", "show item 3", "put the actions up". Requests that clearly name one section, such as "show the methods", "item 3" or "follow along", switch the screen straight away without waiting for Claude. Vaguer ones, such as "the bit where we talked about tariffs", go to Claude and take a few seconds. If you ask for a section that doesn't exist yet, Claude creates it.
+
+The section then stays on every screen, marked **Held here**, until you press **L** or **Follow live**, say "Claude, follow along", or click **On screen ✕** beside its heading in the document.
+
+While a section is held, Claude treats it as where you're working. Anything that doesn't say where it goes ("add a point about recruitment", "reword that") goes into the held section. In grilling, the held item is the one being discussed. Things that name another place ("put that in the intro") or clearly belong elsewhere (a decision, an action) still go there. The screen stays put, and a note such as "✓ Also changed: Introduction" appears for a few seconds; click it to go there.
 
 ## Speakers
 
