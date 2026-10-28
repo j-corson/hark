@@ -43,7 +43,7 @@ hark --lan
 
 This prints a link and a QR code for your phone, which must be on the same Wi-Fi. The phone warns once about the self-signed certificate; accept it. Phones need HTTPS before they'll share the microphone, which is why the certificate exists. The phone can be the microphone, the screen, or both. For example, your laptop captures a Teams call while you glance at your phone.
 
-The link includes a private key, and only browsers that have opened it can connect. If you use Tailscale, `tailscale serve --bg 8765` gives you a trusted HTTPS address instead.
+The link includes a private key, and only browsers that have opened it can connect. If a link gets out (a screenshot of the QR code, say), run `hark --new-key` and restart hark; every old link and signed-in browser then stops working. If you use Tailscale, `tailscale serve --bg 8765` gives you a trusted HTTPS address instead.
 
 ## Editing
 
@@ -151,6 +151,7 @@ To send the document to someone, use **More → Share…**, which opens your pho
 | `--replay file.m4a` | Feed a recording through as if it were live. Useful for old recordings or for trying hark out. Needs ffmpeg for formats other than WAV. |
 | `--rebuild file.vtt` | Build a new session from a Teams transcript or a hark `transcript.md`, then exit. |
 | `--port 8765` | Local port. The phone port is this plus one. |
+| `--new-key` | Replace the access key, so old links and signed-in browsers stop working. |
 
 **More → Instructions for Claude** shows the brief Claude follows for the current session. You can rewrite it, for example "this is a supervision meeting; track the student's next steps", and set how often Claude updates. The defaults are every 20 seconds for meetings and every 5 seconds for co-writing.
 
@@ -172,11 +173,15 @@ Whichever service you choose, you still address it as "Claude, …" out loud.
 
 **With your Claude subscription**, each update runs `claude -p` (headless Claude Code) once. The call runs with `--safe-mode`, which skips your CLAUDE.md, MCP servers, plugins and hooks. It has no tools, and it isn't saved to your `/resume` history. hark removes `ANTHROPIC_API_KEY` from the call's environment so that usage counts against your subscription rather than API billing. To use less of your plan, raise the update interval or use `--model haiku`.
 
+hark never sees your Claude login. It runs your own copy of Claude Code, unchanged, which you sign in to through Anthropic's own sign-in. This is how Anthropic's [Claude Code terms](https://code.claude.com/docs/en/legal-and-compliance) allow a Claude plan to be used, and Anthropic's help page on [using the Agent SDK and `claude -p` with your plan](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan) says this usage counts towards your plan's limits. Those limits assume ordinary, individual use, so run hark for yourself rather than as a service for other people. If you'd rather not rely on your plan, or Anthropic changes its rules, use an API key instead (`hark --setup`).
+
 **With the Anthropic API**, `sonnet`, `opus` and `haiku` mean the current models of those names; you can also give a full model ID. hark turns on Anthropic's automatic fallback, which retries a request on another Claude model if the first one declines it.
 
 ## Privacy
 
-Audio stays on your machine: voice detection, transcription and speaker matching all run locally. Transcript text and the document go to the AI service you chose: Anthropic for your Claude subscription or an Anthropic key, or the provider you set up otherwise. With a local model (Ollama, LM Studio), nothing leaves your machine except research lookups, which aren't available there anyway. Let people know you're transcribing.
+Audio stays on your machine: voice detection, transcription and speaker matching all run locally. Transcript text and the document go to the AI service you chose: Anthropic for your Claude subscription or an Anthropic key, or the provider you set up otherwise. With a local model (Ollama, LM Studio), nothing leaves your machine except research lookups, which aren't available there anyway.
+
+**Tell people before you start, and get their agreement.** Recording or transcribing a conversation without consent is against the law in some places and against many organisations' policies, and the transcript and document are personal data. Sessions are saved as plain files in `~/Documents/Hark/`, so delete the ones you don't need.
 
 ## How it works
 
@@ -194,3 +199,9 @@ Everything on the speech side uses [sherpa-onnx](https://github.com/k2-fsa/sherp
 - **The phone says the microphone is blocked**: open the `https://` link from `hark --lan`, not `http://`.
 - **No call audio**: the share dialog has a separate **Share audio** toggle. Turn it on.
 - **Transcription falls behind** (shown in the status line): try `--asr moonshine`.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
+
+hark is an independent project. It isn't made or endorsed by Anthropic.

@@ -6,6 +6,7 @@ import hmac
 import json
 import logging
 from importlib import resources
+from urllib.parse import urlsplit
 
 from aiohttp import WSMsgType, web
 
@@ -15,6 +16,17 @@ from .modes import MODES
 log = logging.getLogger("hark")
 STATIC = resources.files("hark") / "static"
 COOKIE = "hark_key"
+
+
+def same_origin(request: web.Request) -> bool:
+    """Browsers send the cookie with WebSocket requests from other sites on the same host
+    (another app on localhost, say), so only accept connections from hark's own page."""
+    origin = request.headers.get("Origin")
+    if not origin:
+        return True  # not a browser
+    host = urlsplit(origin).netloc.lower()
+    allowed = {request.host.lower(), request.headers.get("X-Forwarded-Host", "").lower()} - {""}
+    return host in allowed
 
 
 def make_app(hub: Hub, token: str) -> web.Application:
@@ -54,6 +66,8 @@ def make_app(hub: Hub, token: str) -> web.Application:
         return web.json_response({k: {"label": v["label"], "brief": v["brief"], "interval": v["interval"]} for k, v in MODES.items()})
 
     async def ws_handler(request):
+        if not same_origin(request):
+            raise web.HTTPForbidden(text="This page isn't hark.")
         ws = web.WebSocketResponse(heartbeat=20, max_msg_size=8 * 1024 * 1024)
         await ws.prepare(request)
         await hub.connect(ws)

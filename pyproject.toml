@@ -3,6 +3,8 @@ name = "hark"
 version = "0.1.0"
 description = "Listen to a conversation and keep a live, structured document, powered by your Claude subscription"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Mike Fell", email = "79201953+mikefsway@users.noreply.github.com" }
 ]

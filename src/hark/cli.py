@@ -28,9 +28,9 @@ from .session import default_data_dir
 _config_dir, _write_private = config_dir, write_private
 
 
-def token() -> str:
+def token(new: bool = False) -> str:
     f = _config_dir() / "key"
-    if not f.exists():
+    if new or not f.exists():
         _write_private(f, secrets.token_urlsafe(18).encode())
     return f.read_text().strip()
 
@@ -163,6 +163,8 @@ def main(argv: list[str] | None = None) -> None:
                    help="build a new session from a Teams .vtt transcript or hark's transcript.md (uses --mode), then exit")
     p.add_argument("--no-browser", action="store_true")
     p.add_argument("--check", action="store_true", help="check the Claude login and download models, then exit")
+    p.add_argument("--new-key", action="store_true",
+                   help="replace the access key so old links and signed-in browsers stop working, then exit")
     p.add_argument("--version", action="version", version=f"hark {__version__}")
     args = p.parse_args(argv)
 
@@ -178,6 +180,11 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.check:
         check(args)
+        return
+    if args.new_key:
+        token(new=True)
+        print("hark: made a new access key. Restart hark and open the new link it prints;"
+              " old links and signed-in browsers no longer work.")
         return
     agenda_text = None
     if args.agenda:
