@@ -100,6 +100,7 @@ button { font: inherit; color: inherit; cursor: pointer; border: 0; background: 
 .rail ol { margin: 0; padding: 0; list-style: none; }
 .rail li { margin: 0 0 .25em; padding: .25em .55em; border-radius: .35em; line-height: 1.3; }
 .rail li button { display: block; width: 100%; text-align: left; padding: 0; line-height: 1.3; }
+.rail .n { display: inline-block; min-width: 1.4em; font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 400; }
 .rail li.cur { background: var(--sheet); color: var(--ink); font-weight: 600; box-shadow: inset .18em 0 0 var(--act); }
 .rail li.done { text-decoration: line-through; opacity: .7; }
 .rail li.ready button::after { content: " ✓"; color: var(--act); }

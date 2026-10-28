@@ -52,7 +52,7 @@ The link includes a private key, and only browsers that have opened it can conne
 - **More → Edit as text** gives you the whole document as Markdown.
 - **Undo** reverts the last change, whether you made it or Claude did.
 - **Tell Claude** (the box at the bottom) takes typed instructions, such as "make Actions a table" or "merge the two budget points". These are sent straight away.
-- **Say "Claude, …"** to give an instruction out loud, for example "Claude, swap questions four and five". hark updates as soon as you finish the sentence instead of waiting for the next update, and confirms what it did ("✓ Swapped Q4 and Q5").
+- **Say "Claude, …"** to give an instruction out loud, for example "Claude, swap questions four and five". hark updates as soon as you finish the sentence instead of waiting for the next update, and confirms what it did ("✓ Swapped Q4 and Q5"). Speech recognition sometimes writes the name as "Claw", "Clark" or "Cloud"; at the start of a sentence those count as "Claude" too.
 - **Tidy** has Claude go over the whole document: it keeps only the latest version of anything that was revised, merges repeats and moves things where they belong. You can also say "Claude, tidy this up". In co-writing, hark tidies by itself when you press Stop. A tidy takes 20–60 seconds, and **Undo** puts the previous version back.
 - While you're editing, Claude waits. Its next update applies small anchored changes to the document as it now stands, so your wording isn't reverted.
 - Text Claude has just added or changed is highlighted for about 25 seconds.
@@ -120,6 +120,8 @@ It follows the conversation by itself, moving to whichever part of the document 
 ### Holding a section on screen
 
 You can choose what's on screen yourself. Click a section in the list beside it, use **←** and **→** (or a presentation clicker), or ask out loud: "Claude, let's look at the methods", "show item 3", "put the actions up". Requests that clearly name one section, such as "show the methods", "item 3" or "follow along", switch the screen straight away without waiting for Claude. Vaguer ones, such as "the bit where we talked about tariffs", go to Claude and take a few seconds. If you ask for a section that doesn't exist yet, Claude creates it.
+
+In co-writing and notes, sections are numbered in the room screen's outline and beside their headings in the document. The numbers are for display only and aren't saved in the document. Say "Claude, section 3", "next section" or "previous section" (or "go back a section") to move around. These short commands work without "Claude" too, as long as the sentence is nothing but the command: "Section four." or "Next section." A sentence such as "the next section should cover ants" doesn't move the screen. In grilling, "section 3" means item 3. "Next item" goes to Claude, which marks the current item ready and, if the screen is held, shows the next one. In meetings, where the screen lists the agenda, these go to Claude.
 
 The section then stays on every screen, marked **Held here**, until you press **L** or **Follow live**, say "Claude, follow along", or click **On screen ✕** beside its heading in the document.
 

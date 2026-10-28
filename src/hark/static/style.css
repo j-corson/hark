@@ -90,6 +90,7 @@ select { background: transparent; border: 1px solid var(--line); border-radius: 
 .sheet .blk:hover { box-shadow: -10px 0 0 color-mix(in srgb, var(--ink) 6%, transparent), 10px 0 0 color-mix(in srgb, var(--ink) 6%, transparent); background: color-mix(in srgb, var(--ink) 6%, transparent); }
 .sheet .wntoggle { font-size: 14px; font-weight: 600; color: var(--muted); margin-left: 10px; padding: 2px 9px; border: 1px solid var(--line); border-radius: 99px; vertical-align: middle; }
 .sheet .wn { color: var(--muted); font-size: 16px; }
+.sheet h2[data-num]::before { content: attr(data-num); display: inline-block; min-width: 1.3em; color: var(--muted); font-weight: 400; }
 .sheet .stagetag { font-size: 13px; font-weight: 600; color: var(--act); margin-left: 10px; padding: 1px 9px; border: 1px solid currentColor; border-radius: 99px; vertical-align: middle; }
 .sheet .emptysec { color: var(--muted); font-style: italic; font-size: 16px; margin: 2px 0; cursor: text; }
 .sheet .add { display: block; margin-top: 18px; color: var(--muted); font-size: 15px; padding: 4px 0; }

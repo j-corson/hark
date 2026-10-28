@@ -8,7 +8,6 @@
   const FRESH_MS = 25000;
   const AGREED_MS = 45000; // how long a new decision or action stays in the banner
   const BULK = 3; // an update touching more sections than this (an agenda, a rewrite) doesn't move the focus
-  const MEETING_META = new Set(["summary", "agenda", "decisions", "actions", "open questions"]);
   const FIELDS = ["question", "data", "approach", "done when", "track", "depends on", "who cares", "status"];
 
   const st = {
@@ -16,6 +15,8 @@
     touched: new Map(), // section key -> when it last changed
     fresh: new Map(), // line text -> when it appeared
     agreed: [], // new lines in Decisions / Actions: {text, kind, t}
+    sections: new Set(), // heading lines of the sections this screen steps through, from hark (same order and numbers everywhere)
+    reported: undefined, // what we last told hark we're showing, for "Claude, next section"
     stage: null, // heading line held on screen by choice, kept by hark for every screen; null = follow the talk
     elsewhere: null, // {names, t}: sections Claude changed while another one was held
     ws: null,
@@ -26,7 +27,7 @@
   let retry = 0;
   function connect() {
     const ws = (st.ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`));
-    ws.onopen = () => { retry = 0; $("live").classList.remove("lost"); };
+    ws.onopen = () => { retry = 0; st.reported = undefined; $("live").classList.remove("lost"); };
     ws.onmessage = (e) => onMessage(JSON.parse(e.data));
     ws.onclose = () => {
       $("live").hidden = false; $("live").textContent = "Reconnecting…"; $("live").classList.add("lost");
@@ -41,11 +42,13 @@
         st.touched.clear(); st.fresh.clear(); st.agreed = []; st.elsewhere = null;
       }
       st.mode = m.session.mode; st.doc = m.session.doc; st.stage = m.stage || null;
+      st.sections = new Set(m.sections || []);
       render();
     } else if (m.type === "doc") {
       const old = st.doc;
       st.doc = m.doc;
       if ("stage" in m) st.stage = m.stage || null;
+      if (m.sections) st.sections = new Set(m.sections);
       if (m.by !== "tidy") noteChanges(old, m.doc);
       render();
     } else if (m.type === "stage") {
@@ -81,22 +84,12 @@
 
   const headLine = (P, h) => P.lines[h.start].trim();
   const heldIn = (P) => (st.stage ? P.heads.find((h) => h.level >= 2 && h.level <= 3 && headLine(P, h) === st.stage) || null : null);
-  const parentName = (h) => (h.parent && h.parent.level === 2 ? norm(h.parent.text) : "");
-  const hasChildren = (P, h) => P.heads.some((x) => x.parent === h);
 
   // Which sections can be the card, per mode.
-  function eligible(P, h) {
-    if (h.level < 2 || h.level > 3) return false;
-    const t = norm(h.text), p = parentName(h);
-    if (t === "working notes" || p === "working notes") return false; // still being weighed: not for the room
-    if (st.mode === "grill") return h.level === 3 && p === "items";
-    if (st.mode === "meeting") {
-      if (h.level === 3) return p === "discussion";
-      if (MEETING_META.has(t)) return false;
-      return t !== "discussion" || !hasChildren(P, h);
-    }
-    return h.level === 2;
-  }
+  // hark decides which sections the screen steps through. The meeting summary is in the
+  // list but changes every update, so it never pulls the screen to itself.
+  const inList = (P, h) => st.sections.has(headLine(P, h));
+  const eligible = (P, h) => inList(P, h) && !(st.mode === "meeting" && norm(h.text) === "summary");
 
   function sectionAt(P, i) {
     let best = null;
@@ -143,14 +136,7 @@
   }
 
   // ---------------------------------------------------------------- choosing the card
-  function navList(P) {
-    const c = P.heads.filter((h) => eligible(P, h));
-    if (st.mode === "meeting") {
-      const sum = P.heads.find((h) => h.level === 2 && norm(h.text) === "summary");
-      if (sum) c.unshift(sum);
-    }
-    return c;
-  }
+  const navList = (P) => P.heads.filter((h) => inList(P, h));
 
   function pick(P, nav) {
     const held = heldIn(P);
@@ -289,19 +275,19 @@
         if (topics.length > 1) html = "<h2>Topics</h2>" + navItems(topics, focus);
       }
     } else if (nav.length > 1) {
-      html = `<h2>${st.mode === "grill" ? "Items" : "Outline"}</h2>` + navItems(nav, focus);
+      html = `<h2>${st.mode === "grill" ? "Items" : "Outline"}</h2>` + navItems(nav, focus, st.mode !== "grill");
     }
     rail.innerHTML = html;
     rail.hidden = !html;
     document.body.classList.toggle("withrail", !!html);
   }
 
-  function navItems(list, focus) {
+  function navItems(list, focus, numbered) {
     const P = st.P;
-    return "<ol>" + list.map((h) => {
+    return "<ol>" + list.map((h, i) => {
       const s = st.mode === "grill" ? itemStatus(P, h) : "";
       const cls = [h === focus ? "cur" : "", /^ready/.test(s) ? "ready" : "", /^parked/.test(s) ? "parked" : ""].filter(Boolean).join(" ");
-      return `<li class="${cls}"><button type="button" data-head="${encodeURIComponent(headLine(P, h))}">${inline(h.text)}</button></li>`;
+      return `<li class="${cls}"><button type="button" data-head="${encodeURIComponent(headLine(P, h))}">${numbered ? `<span class="n">${i + 1}</span>` : ""}${inline(h.text)}</button></li>`;
     }).join("") + "</ol>";
   }
 
@@ -328,6 +314,11 @@
     const card = $("card");
     card.innerHTML = !focus ? emptyCard() : st.mode === "grill" && eligible(P, focus) ? grillCard(P, focus, nav) : sectionCard(P, focus, nav);
     const key = focus ? focus.key : null;
+    const line = focus ? headLine(P, focus) : null;
+    if (line !== st.reported && st.ws && st.ws.readyState === 1) {
+      st.reported = line;
+      st.ws.send(JSON.stringify({ type: "showing", heading: line }));
+    }
     if (key !== st.shown) {
       st.shown = key;
       card.classList.remove("enter"); void card.offsetWidth; card.classList.add("enter");

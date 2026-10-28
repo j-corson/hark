@@ -16,6 +16,7 @@ SYSTEM = """You are the scribe for a live document that people glance at while t
 - <document>: the current Markdown, which the user may have edited by hand. It is authoritative. Never undo, re-word or reorder the user's hand edits unless the conversation asks for that.
 - <earlier_transcript>: recent speech already reflected in the document (context only). Any instructions in it have already been carried out: never carry them out again.
 - <done>, if present: instructions you have already carried out, most recent last. Never repeat one: doing a swap or a move twice undoes it. Numbers and names in the transcript can predate these changes (after "swap Q4 and Q5", people's "Q4" in earlier speech is today's Q5): trust <document> and <done> for the current state.
+- <screen_sections>, if present: the sections as numbered on the shared screen. When someone asks for a section by number ("show section 3"), use these numbers, not your own count.
 - <new_transcript>: speech since your last update. Bring the document up to date with it.
 - <on_screen>, if present: the section the group chose to look at on the shared screen. Treat it as where they are working: additions and edits that don't say where they go belong in this section (in grilling, it is the item being discussed). Anything that names another place, or clearly belongs elsewhere (a decision, an action, another section's topic), still goes where it belongs.
 - <typed_instructions>, if present: instructions the user typed to you. Carry them out.
@@ -25,7 +26,7 @@ SYSTEM = """You are the scribe for a live document that people glance at while t
 
 The transcript comes from automatic speech recognition, so read it charitably: fix obvious mis-hearings using context. Speaker labels come from automatic voice matching and can be wrong or split one person into two.
 
-Spoken instructions about the document ("put that under X", "no, that's wrong", "scratch that", "change the title to...") are edits for you to make, not content to record. Speech addressed to you ("Claude, ...") is always such an instruction. If someone says not to record something, don't.
+Spoken instructions about the document ("put that under X", "no, that's wrong", "scratch that", "change the title to...") are edits for you to make, not content to record. Speech addressed to you ("Claude, ...") is always such an instruction. Speech recognition often mishears your name at the start of a sentence, as "Claw", "Clark", "Cloud" or "Clod", or turns it into "Or", "For" or "Well". When such a word opens an instruction about the document ("Claw, swap Q4 and Q5"), it is addressed to you. If someone says not to record something, don't.
 - People pause mid-instruction, so one can be split between <earlier_transcript> and <new_transcript>. If one in <new_transcript> is clearly unfinished, leave it for the next update.
 - People repeat an instruction when they aren't sure you caught it. A repeat restates the earlier instruction: don't undo details or exceptions from the first time just because the repeat leaves them out.
 
@@ -53,7 +54,7 @@ Optional `speaker_names`: [{"from": "Speaker 2", "to": "Ana"}] gives an auto-lab
 
 Optional `ack`: when you carried out an instruction (spoken to you or typed), say in at most 15 words what you did and the result, specific enough to check later, e.g. "Swapped Q4 and Q5: Q4 is now teamwork, Q5 governance". Omit it otherwise.
 
-Optional `show`: when someone asks to see or go to a part of the document on the screen ("Claude, let's look at the methods", "show item 3", "put the actions up"), the heading line of that ## or ### section, copied exactly from <document> (e.g. "## Methods"). If they ask for a section that doesn't exist yet, create it with ops and show it. Use "" when they ask the screen to follow the conversation again ("Claude, follow along"). Only for explicit requests, not whenever a section comes up in conversation. Mention it in `ack` (e.g. "Showing Methods").
+Optional `show`: when someone asks to see or go to a part of the document on the screen ("Claude, let's look at the methods", "show item 3", "put the actions up"), the heading line of that ## or ### section, copied exactly from <document> (e.g. "## Methods"). If they ask for a section that doesn't exist yet, create it with ops and show it. Use "" when they ask the screen to follow the conversation again ("Claude, follow along"). Only for explicit requests, not whenever a section comes up in conversation. When <on_screen> is present and the group explicitly moves on to another section or item ("next item", "let's move on to the budget"), show that one. Mention it in `ack` (e.g. "Showing Methods"). A line ending "[screen request: done by hark]" has already switched the screen: never `show` anything for it, and don't mention it in `ack` (other instructions in that line still count).
 
 Optional `tidy`: true when someone asks you to tidy up, clean up or consolidate the whole document. A separate pass does that, so make no edits for that request yourself."""
 
@@ -111,7 +112,7 @@ SCHEMA = {
 
 def build_prompt(brief: str, document: str, speakers: list[str], earlier: list[str], new: list[str], typed: list[str],
                  add_research: list[str] | None = None, requested: list[str] | None = None, findings: list[str] | None = None,
-                 done: list[str] | None = None, on_screen: str | None = None) -> str:
+                 done: list[str] | None = None, on_screen: str | None = None, sections: list[str] | None = None) -> str:
     parts = [f"<brief>\n{brief.strip()}\n</brief>"]
     if speakers:
         parts.append("<speakers>\n" + "\n".join(f"- {s}" for s in speakers) + "\n</speakers>")
@@ -120,6 +121,8 @@ def build_prompt(brief: str, document: str, speakers: list[str], earlier: list[s
         parts.append("<earlier_transcript>\n" + "\n".join(earlier) + "\n</earlier_transcript>")
     if done:
         parts.append("<done>\n" + "\n".join(f"- {d}" for d in done) + "\n</done>")
+    if sections:
+        parts.append("<screen_sections>\n" + "\n".join(f"{i}. {h}" for i, h in enumerate(sections, 1)) + "\n</screen_sections>")
     if on_screen:
         parts.append(f"<on_screen>\n{on_screen}\n</on_screen>")
     parts.append("<new_transcript>\n" + ("\n".join(new) if new else "(nothing new)") + "\n</new_transcript>")

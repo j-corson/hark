@@ -11,6 +11,7 @@
     caps: {}, ctx: null, workletReady: null, wake: null, lastUserScroll: 0,
     research: [], unseen: new Set(), tab: "research", view: "doc", notesOpen: false,
     stage: null, // heading held on the room screen; Claude puts new points there
+    sections: [], // the room screen's sections, in order; in co-writing and notes their numbers show beside the headings
   };
   const narrow = window.matchMedia("(max-width: 820px)");
 
@@ -36,6 +37,7 @@
     if (m.type === "state") {
       st.session = m.session; st.sessions = m.sessions;
       st.doc = m.session.doc; st.version = m.session.version; st.stage = m.stage || null;
+      st.sections = m.sections || [];
       st.lines = m.session.lines; st.speakers = m.session.speakers;
       $("modeSel").value = m.session.mode;
       $("undoBtn").disabled = !m.session.can_undo;
@@ -59,6 +61,7 @@
       }
       st.doc = m.doc; st.version = m.version;
       if ("stage" in m) st.stage = m.stage || null;
+      if (m.sections) st.sections = m.sections;
       $("undoBtn").disabled = !m.can_undo;
       renderTitle(m.title);
       renderDoc(m.by === "claude");
@@ -112,6 +115,8 @@
       const node = tmp.firstElementChild;
       node.dataset.start = b.start; node.dataset.end = b.end;
       if (inNotes) node.classList.add("wn");
+      const num = b.kind === "h" && st.session && ["outline", "notes"].includes(st.session.mode) ? st.sections.indexOf(lines[b.start].trim()) : -1;
+      if (num >= 0) node.dataset.num = num + 1;
       if (b.kind === "h" && st.stage && lines[b.start].trim() === st.stage) {
         node.classList.add("onstage");
         const tag = document.createElement("button");
