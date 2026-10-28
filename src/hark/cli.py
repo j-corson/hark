@@ -244,6 +244,7 @@ def main(argv: list[str] | None = None) -> None:
             for ip in ips:
                 print(f"  On your phone (same Wi-Fi):  https://{ip}:{args.port + 1}/?k={key}", flush=True)
             if ips:
+                print(f"  Room screen (read-only, for a TV or projector):  https://{ips[0]}:{args.port + 1}/present?k={key}", flush=True)
                 print("  (Your phone will warn about the self-signed certificate once. Accept it to continue.)\n", flush=True)
                 print_qr(f"https://{ips[0]}:{args.port + 1}/?k={key}")
         print(f"  Sessions are saved in {args.data_dir}\n  Ctrl+C to stop.\n", flush=True)

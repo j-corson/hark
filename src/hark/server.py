@@ -50,9 +50,11 @@ def make_app(hub: Hub, token: str) -> web.Application:
             raise web.HTTPForbidden(text="Open hark using the link printed in the terminal (it carries a key).")
         return await handler(request)
 
-    async def index(_request):
-        return web.Response(body=(STATIC / "index.html").read_bytes(), content_type="text/html",
-                            headers={"Cache-Control": "no-store"})
+    def page(name: str):
+        async def handler(_request):
+            return web.Response(body=(STATIC / name).read_bytes(), content_type="text/html",
+                                headers={"Cache-Control": "no-store"})
+        return handler
 
     async def static(request):
         name = request.match_info["name"]
@@ -88,7 +90,8 @@ def make_app(hub: Hub, token: str) -> web.Application:
         hub.spawn(hub.updater())
 
     app = web.Application(middlewares=[guard])
-    app.router.add_get("/", index)
+    app.router.add_get("/", page("index.html"))
+    app.router.add_get("/present", page("present.html"))  # read-only room screen
     app.router.add_get("/modes", modes)
     app.router.add_get("/ws", ws_handler)
     app.router.add_get("/static/{name}", static)

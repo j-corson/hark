@@ -445,7 +445,8 @@
     if (!b) return;
     hidePopovers();
     const act = b.dataset.act;
-    if (act === "edit") openRaw();
+    if (act === "present") window.open("/present", "hark-present", "popup,width=1280,height=720");
+    else if (act === "edit") openRaw();
     else if (act === "update") { send({ type: "update_now" }); toast("Asked Claude to update now."); }
     else if (act === "copy") {
       try { await navigator.clipboard.writeText(st.doc); toast("Copied the document as Markdown."); }

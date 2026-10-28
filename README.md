@@ -103,6 +103,21 @@ The panel beside the document (the **Research** tab; on a phone, the **Research*
 
 One lookup uses noticeably more of your plan than a document update: roughly as much as 5 to 10 updates.
 
+## On a shared screen
+
+When hark is on a TV or projector in the room, or shared into a Teams call, show the **room screen** instead of the document. It's read-only and in large type, and it shows only what the group is on right now:
+
+- **Grilling**: the current item's top open question with its suggested answer ("Say *yes* to accept"), the other open questions, and the spec so far, with "?" for anything not yet settled.
+- **Meeting**: the topic under discussion, with the agenda alongside showing which item you're on. New decisions and actions appear in a banner for 45 seconds.
+- **Co-writing** and **Notes**: the section being written, with the outline alongside.
+
+It follows the conversation by itself, moving to whichever part of the document last changed. The transcript, speaker names, working notes and editing controls never appear on it.
+
+- **More → Room screen** opens it in a new window. Drag that window onto the projector and press **F** for full screen. In a Teams call, share that window.
+- For a separate device such as a room PC or a smart TV, start hark with `--lan` and open the **Room screen** link it prints.
+- **←** and **→** (or a presentation clicker) step through sections by hand. The screen then stays where you put it until you press **L** or **Follow live**.
+- The buttons fade away when the mouse is still.
+
 ## Speakers
 
 Voices are grouped automatically as Speaker 1, Speaker 2 and so on. Claude may fill in real names when it's obvious, for example when someone introduces themselves.
