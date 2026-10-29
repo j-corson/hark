@@ -196,7 +196,9 @@ def test_only_the_collection_chosen_for_the_session_is_ever_searched(folder, tmp
     # Nothing chosen: Claude isn't told about any collection, and a request to search one goes nowhere.
     assert hub._collections_for(s) == []
     spoken({"label": "x", "question": "What did we agree on memory?", "kind": "corpus", "corpus": "proj"})
-    assert s.research == [] and "no collection chosen" in sent[-1]["text"]
+    assert s.research == [] and "pick it in the Research panel" in sent[-1]["text"] and "proj" in sent[-1]["text"]
+    spoken({"label": "x", "question": "What does the repo say?", "kind": "corpus"})
+    assert s.research == [] and "pick one in the Research panel" in sent[-1]["text"]
     asyncio.run(hub.handle(ws, {"type": "research_ask", "q": "Budgets?", "corpus": "proj"}))
     assert s.research[-1]["kind"] != "corpus"  # typed: the web, whatever the message claims
 
@@ -234,6 +236,10 @@ def test_scribe_prompt_lists_collections():
     p = build_prompt("b", "# D", [], [], ["Ana: Claude, what do the transcripts say?"], [], collections=[{"name": "si", "about": "transcripts"}])
     assert "<collections>\n- si: transcripts\n</collections>" in p
     assert "<collections>" not in build_prompt("b", "# D", [], [], [], [])
+    # Saved but none picked: Claude is told that much (no names), so it passes the request on instead of saying there are none.
+    p = build_prompt("b", "# D", [], [], [], [], collections=[], collections_unpicked=True)
+    assert "<collections_unpicked/>" in p and "<collections>" not in p
+    assert "<collections_unpicked/>" not in build_prompt("b", "# D", [], [], [], [], collections=[{"name": "si"}], collections_unpicked=True)
 
 
 # -- backends -----------------------------------------------------------------------

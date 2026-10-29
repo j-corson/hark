@@ -368,7 +368,8 @@ class Hub:
         base = s.doc
         numbered = screen_sections(base, s.mode) if s.mode in ("outline", "notes") else None
         prompt = build_prompt(s.brief, base, s.speaker_notes(), earlier, new, typed, adds, requested, findings, s.done[-DONE_KEPT:],
-                              on_screen=s.stage, sections=numbered, collections=self._collections_for(s))
+                              on_screen=s.stage, sections=numbered, collections=self._collections_for(s),
+                              collections_unpicked=not self.active_corpus(s) and bool(self.researcher.collections()))
         detail = f"{len(pending)} new line{'s' * (len(pending) != 1)}" if pending else ""
         if adds:
             detail = (detail + ", " if detail else "") + "adding research"
@@ -624,8 +625,10 @@ class Hub:
             # Whatever collection was named, only the session's own one is ever searched.
             corpus = self.active_corpus(s) if kind == "corpus" else None
             if kind == "corpus" and not corpus:
-                await self.broadcast({"type": "toast", "text": "Claude heard a request to search your documents, but this session has "
-                                                               "no collection chosen. Pick one next to Look something up."})
+                named = self.researcher.find(r.get("corpus"))
+                await self.broadcast({"type": "toast", "text": f"To let Claude search {named or 'your collections'}, pick "
+                                                               f"{'it' if named else 'one'} in the Research panel, in the menu next to "
+                                                               "Look something up (it says Web now), then ask again."})
                 continue
             if not q or (q.lower(), corpus) in known:
                 continue
