@@ -112,6 +112,7 @@ The panel beside the document (the **Research** tab; on a phone, the **Research*
 - Say it out loud too: "add that explanation to the background", "add the Sorrell review" or "put those papers in". Claude adds just what was asked for, and the panel marks it as added.
 - **Add** puts one finding into the document and **Add all to document** puts in the lot. Claude places them where they fit. Nothing from research goes into the document until you add it.
 - Untick **Start right away when someone asks out loud** to have spoken requests wait for you to press **Research this**.
+- On Windows, finished results can also go into a PowerPoint deck as slides: see [Adding slides to a PowerPoint deck](#adding-slides-to-a-powerpoint-deck).
 - Everything you looked up stays with the session: **Copy Markdown**, **Download .md** and sharing as a file add a **Research** section after the notes, and the session folder keeps it in `research.md`.
 
 A lookup for sources uses noticeably more of your plan than a document update: roughly as much as 5 to 10 updates. A quick look-up should use less, as it searches less.
@@ -162,6 +163,18 @@ The section then stays on every screen, marked **Held here**, until you press **
 
 While a section is held, Claude treats it as where you're working. Anything that doesn't say where it goes ("add a point about recruitment", "reword that") goes into the held section. In grilling, the held item is the one being discussed. Things that name another place ("put that in the intro") or clearly belong elsewhere (a decision, an action) still go there. The screen stays put, and a note such as "✓ Also changed: Introduction" appears for a few seconds; click it to go there.
 
+### Adding slides to a PowerPoint deck
+
+On Windows, with PowerPoint installed, hark can add slides to a deck you have open, for example the one you're presenting from. The room screen stays as it is; the deck gets only the slides you choose.
+
+- **Link the deck**: **☰ → Link a PowerPoint file…** on the laptop running hark (not on a phone), or start with `hark --pptx path\to\deck.pptx`. The link is saved with the session.
+- **Slide this**: say "Claude, put this on a slide" (or "add that to the deck"), or use **☰ → Slide this** on any device. You get what the room screen shows: an answer that popped up (up to about 30 seconds after it went), otherwise the section on screen. In grilling that's the current question with its suggested answer; in a meeting, the topic with its notes and any decisions that name it. Name a section to slide that instead: "Claude, put the methods on a slide". Requests that clearly name one section are done straight away without a Claude call; vaguer ones go to Claude. Working notes are never put on a slide.
+- **Add to slides** on a finished card in the Research panel adds that card: its title, the answer (shortened), and up to six findings as linked bullets. The card then says *added to slides*, and **Add again** adds another copy.
+- Tick **Add finished results to the linked deck while it's open** to have every finished request for sources, and every answer from your collections, added as it comes in. Quick look-ups and Claude's answers about the meeting are never added by themselves. Results already in the panel aren't added when you tick it.
+- Each slide goes at the end of the deck, using the deck's own layout, with what didn't fit, each finding's note and the original request in the speaker notes. A slide show that's running carries on where it is.
+- hark never saves the deck: the slides stay unsaved until you save, so PowerPoint's **Undo** removes one you didn't want. If the deck isn't open in PowerPoint (or is open read-only), nothing is changed and hark says *deck not open*; open it and try again. A deck kept in OneDrive works too.
+- Elsewhere than Windows, hark shows no slide controls and `--pptx` is ignored.
+
 ## Speakers
 
 Voices are grouped automatically as Speaker 1, Speaker 2 and so on. Claude may fill in real names when it's obvious, for example when someone introduces themselves.
@@ -208,6 +221,7 @@ To send the document to someone, use **☰ → Share…**, which opens your phon
 | `--corpus [NAME=]FOLDER` | Let Claude search a folder of your own documents for this run (see [Your own documents](#your-own-documents)). `--add-corpus FOLDER\|OWNER/REPO` saves a folder or GitHub repo for every run, `--remove-corpus NAME` forgets it. |
 | `--asr parakeet\|moonshine` | Speech model. Parakeet (default) is accurate, adds punctuation and handles 25 European languages. Moonshine is English-only, smaller and faster, for older laptops. |
 | `--lan` | Also serve over HTTPS on your network, for your phone. |
+| `--pptx deck.pptx` | Link a PowerPoint deck to add slides to while it's open (Windows only; see [Adding slides to a PowerPoint deck](#adding-slides-to-a-powerpoint-deck)). |
 | `--replay file.m4a` | Feed a recording through as if it were live. Useful for old recordings or for trying hark out. Needs ffmpeg for formats other than WAV. |
 | `--rebuild file.vtt` | Build a new session from a Teams transcript or a hark `transcript.md`, then exit. |
 | `--port 8765` | Local port. The phone port is this plus one. |

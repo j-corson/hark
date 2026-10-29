@@ -31,6 +31,8 @@
     <button id="menuBtn" type="button" class="quiet menubtn" aria-haspopup="true" aria-label="More" title="More"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
     <div id="moreMenu" class="popover right" hidden>
       <button type="button" data-act="present">Room screen</button>
+      <button type="button" data-act="slide" id="slideBtn" hidden title="Add what the room screen shows to the linked PowerPoint deck">Slide this</button>
+      <button type="button" data-act="link" id="linkBtn" hidden>Link a PowerPoint file…</button>
       <button type="button" data-act="edit">Edit as text</button>
       <button type="button" data-act="update">Update now</button>
       <button type="button" id="shareBtn" data-act="share">Share…</button>
@@ -72,6 +74,7 @@
         <button type="submit" class="quiet">Ask</button>
       </form>
       <label class="autores"><input type="checkbox" id="autoRes"> Start right away when someone asks out loud</label>
+      <label class="autores" id="slidesRow" hidden><input type="checkbox" id="autoSlides"> <span>Add finished results to the linked deck while it's open <span class="deck" id="deckName"></span></span></label>
       <ol class="research" id="research"></ol>
       <p class="empty" id="resEmpty">Ask out loud, for example “Claude, find the key papers on this”, or type a request above. Findings appear here with sources. Add the useful ones to the document.</p>
     </div>

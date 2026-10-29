@@ -10,6 +10,7 @@
     modes: {}, fresh: new Map(), editing: null, rawOpen: false, pendingRender: false,
     caps: {}, ctx: null, workletReady: null, wake: null, lastUserScroll: 0,
     research: [], unseen: new Set(), tab: "research", view: "doc", notesOpen: false,
+    slides: { available: false, canLink: false, deck: null }, // a linked PowerPoint deck, on Windows
     stage: null, // heading held on the room screen; Claude puts new points there
     sections: [], // the room screen's sections, in order; in co-writing and notes their numbers show beside the headings
   };
@@ -43,6 +44,8 @@
       $("undoBtn").disabled = !m.session.can_undo;
       st.research = m.session.research || []; st.unseen.clear();
       $("autoRes").checked = !!m.session.research_auto;
+      st.slides = { available: !!m.slides_available, canLink: !!m.can_link, deck: m.session.deck || null };
+      renderSlides();
       setPicker(); renderClock();
       renderDoc(); renderTranscript(); renderSpeakers(); renderTitle(m.session.title); renderResearch();
     } else if (m.type === "research") {
@@ -467,6 +470,8 @@
     hidePopovers();
     const act = b.dataset.act;
     if (act === "present") window.open("/present", "hark-present", "popup,width=1280,height=720");
+    else if (act === "slide") send({ type: "slides_this" });
+    else if (act === "link") { send({ type: "slides_link" }); toast("Choose the deck in the window that opens."); }
     else if (act === "edit") openRaw();
     else if (act === "update") { send({ type: "update_now" }); toast("Asked Claude to update now."); }
     else if (act === "copy") {
@@ -691,7 +696,13 @@
         h += "</ul>";
       }
     }
+    const slidable = j.state === "done" && st.slides.available && st.slides.deck;
+    if (slidable) {
+      if (j.slide) h += '<p class="rslide">added to slides</p>';
+      else if (j.slides_note) h += `<p class="rslide note">${esc(j.slides_note)}</p>`;
+    }
     const acts = [];
+    if (slidable) acts.push(["slide", j.slide ? "Add again" : "Add to slides"]);
     if (j.kind === "meeting") acts.push(["dismiss", "Dismiss"]);
     else if (j.state === "proposed") acts.push(["run", "Research this", true], ["dismiss", "Dismiss"]);
     else if (j.state === "queued" || j.state === "running") acts.push(["cancel", "Cancel"]);
@@ -731,6 +742,7 @@
       send({ type: "research_add", id, items: null });
       toast(j && j.kind === "quick" ? "Claude is adding that to the document." : "Claude is adding these to the document.");
     } else if (a === "sources") { send({ type: "research_sources", id }); toast("Looking for sources on that."); }
+    else if (a === "slide") send({ type: "slides_add", id });
     else send({ type: `research_${a}`, id });
   });
   $("askForm").onsubmit = (e) => {
@@ -800,6 +812,20 @@
     askHint();
   };
   $("autoRes").onchange = () => send({ type: "research_auto", on: $("autoRes").checked });
+
+  // ---------------------------------------------------------------- slides (Windows, with PowerPoint)
+  // Hidden where hark can't reach PowerPoint. Linking opens a file dialog, so only on this computer.
+  function renderSlides() {
+    const sl = st.slides, linked = !!sl.deck;
+    $("linkBtn").hidden = !sl.canLink;
+    $("slideBtn").hidden = !sl.available;
+    $("slideBtn").disabled = !linked;
+    $("slidesRow").hidden = !sl.available;
+    $("autoSlides").disabled = !linked;
+    $("autoSlides").checked = linked && !!st.session.slides_auto;
+    $("deckName").textContent = linked ? `(${sl.deck})` : "(link a deck first, from the menu)";
+  }
+  $("autoSlides").onchange = () => send({ type: "slides_auto", on: $("autoSlides").checked });
 
   let toastTimer;
   $("toast").onclick = () => { clearTimeout(toastTimer); $("toast").hidden = true; };

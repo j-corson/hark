@@ -62,6 +62,8 @@ class Session:
         self.ends: float | None = None  # when the meeting is due to end, if anyone said
         self.nudge = False  # remind the room near the end if aims or agenda items are still open
         self.nudged = False  # ...and that reminder has been shown
+        self.pptx: str | None = None  # the PowerPoint deck slides are added to, if one is linked
+        self.slides_auto = False  # add finished results to that deck while it's open
 
     # -- paths / naming -----------------------------------------------------
     @property
@@ -158,6 +160,8 @@ class Session:
             "speakers": self.speakers.public(), "dir": str(self.dir),
             "research": self.research, "research_auto": self.research_auto, "corpus": self.corpus,
             "ends": self.ends, "nudge": self.nudge,
+            # Only the deck's name: phones on the network needn't see paths on this computer.
+            "deck": re.split(r"[\\/]", self.pptx)[-1] if self.pptx else None, "slides_auto": self.slides_auto,
         }
 
     # -- persistence --------------------------------------------------------
@@ -180,6 +184,7 @@ class Session:
             "next_line": self._next_line, "speakers": self.speakers.to_json(),
             "research": self.research, "research_auto": self.research_auto, "corpus": self.corpus, "next_research": self._next_research,
             "ends": self.ends, "nudge": self.nudge, "nudged": self.nudged,
+            "pptx": self.pptx, "slides_auto": self.slides_auto,
         }
         _atomic_write(self.dir / "session.json", json.dumps(state))
         if self._log:
@@ -212,11 +217,14 @@ class Session:
         for j in s.research:
             if j["state"] in ("queued", "running"):  # hark was restarted mid-lookup
                 j["state"], j["error"] = "error", "Interrupted when hark restarted"
+            j.pop("slides_note", None)  # "deck not open" was true then, not now
         s.research_auto = d.get("research_auto", True)
         s.corpus = d.get("corpus") if isinstance(d.get("corpus"), str) else None
         s._next_research = d.get("next_research", len(s.research) + 1)
         s.ends = d.get("ends") if isinstance(d.get("ends"), (int, float)) else None
         s.nudge, s.nudged = bool(d.get("nudge")), bool(d.get("nudged"))
+        s.pptx = d.get("pptx") if isinstance(d.get("pptx"), str) else None
+        s.slides_auto = bool(d.get("slides_auto"))
         return s
 
     def set_ends(self, ends: float | None, nudge: bool | None = None) -> None:

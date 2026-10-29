@@ -61,6 +61,8 @@ Optional `ack`: when you carried out an instruction (spoken to you or typed), sa
 
 Optional `show`: when someone asks to see or go to a part of the document on the screen ("Claude, let's look at the methods", "show item 3", "put the actions up"), the heading line of that ## or ### section, copied exactly from <document> (e.g. "## Methods"). If they ask for a section that doesn't exist yet, create it with ops and show it. Use "" when they ask the screen to follow the conversation again ("Claude, follow along"). Only for explicit requests, not whenever a section comes up in conversation. When <on_screen> is present and the group explicitly moves on to another section or item ("next item", "let's move on to the budget"), show that one. Mention it in `ack` (e.g. "Showing Methods"). A line ending "[screen request: done by hark]" has already switched the screen: never `show` anything for it, and don't mention it in `ack` (other instructions in that line still count).
 
+Optional `slide`: only with <slide_deck/> (a PowerPoint deck is linked and open on this computer). When someone explicitly asks to put something on a slide or in the deck ("Claude, put the bit on recruitment on a slide", "add that to the presentation"), the heading line of that ## or ### section, copied exactly from <document>, or "" for whatever the shared screen shows now (an answer that just popped up, or the section on screen). hark adds the slide. Never a section in "## Working notes". A line ending "[screen request: done by hark]" has already been done: never `slide` anything for it. Without <slide_deck/>, there is no deck to add slides to: if someone asks for a slide, say so in `ack` (with <slide_deck_unlinked/>: no deck is linked yet, and one can be linked from the menu on the laptop; with neither: slides need PowerPoint on Windows), and don't put the request in the document.
+
 Optional `answer`: when someone asks you a question about this session itself (the conversation, the document, the agenda, the aims or the time), answer it: {"question": "<what was asked, at most 8 words>", "text": "<the answer>"}. For example "Claude, what else do we need to cover?", "we've got 15 minutes left, what's still open?", "are we on track?", "what did we decide about travel?", "who's doing the slides?". Answer from <document>, the transcript and <clock>, in at most 60 words of plain sentences that will be read off a shared screen. Lead with what matters. For what's left: aims not yet met first, then agenda items not yet covered, and whether they fit the time left; if they don't, suggest what to prioritise and what to park. Say so plainly if the notes don't cover it. This is the place to answer such questions, not `ack` (which only reports edits) or the document (unless they ask for it to go in). Questions that need outside knowledge are `research`, not `answer`.
 
 Optional `ends`: when someone says when the session ends or how long is left ("we finish at half eleven", "we've got 15 minutes left"), the end time as HH:MM on the 24-hour clock, worked out from <clock>. Only when it changes.
@@ -108,6 +110,7 @@ SCHEMA = {
         "ends": {"type": "string"},
         "tidy": {"type": "boolean"},
         "show": {"type": "string"},
+        "slide": {"type": "string"},
         "research_used": {
             "type": "array",
             "items": {"type": "object", "properties": {"id": {"type": "integer"}, "items": {"type": "array", "items": {"type": "integer"}}}, "required": ["id"]},
@@ -127,7 +130,8 @@ SCHEMA = {
 def build_prompt(brief: str, document: str, speakers: list[str], earlier: list[str], new: list[str], typed: list[str],
                  add_research: list[str] | None = None, requested: list[str] | None = None, findings: list[str] | None = None,
                  done: list[str] | None = None, on_screen: str | None = None, sections: list[str] | None = None,
-                 collections: list[dict] | None = None, collections_unpicked: bool = False, clock: str = "") -> str:
+                 collections: list[dict] | None = None, collections_unpicked: bool = False, clock: str = "",
+                 slide_deck: str = "") -> str:
     parts = [f"<brief>\n{brief.strip()}\n</brief>"]
     if speakers:
         parts.append("<speakers>\n" + "\n".join(f"- {s}" for s in speakers) + "\n</speakers>")
@@ -140,6 +144,10 @@ def build_prompt(brief: str, document: str, speakers: list[str], earlier: list[s
         parts.append("<screen_sections>\n" + "\n".join(f"{i}. {h}" for i, h in enumerate(sections, 1)) + "\n</screen_sections>")
     if on_screen:
         parts.append(f"<on_screen>\n{on_screen}\n</on_screen>")
+    if slide_deck == "linked":
+        parts.append("<slide_deck/>")
+    elif slide_deck == "unlinked":
+        parts.append("<slide_deck_unlinked/>")
     parts.append("<new_transcript>\n" + ("\n".join(new) if new else "(nothing new)") + "\n</new_transcript>")
     if clock:
         parts.append(f"<clock>\n{clock}\n</clock>")

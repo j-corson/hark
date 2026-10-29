@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import json
 import logging
 from importlib import resources
@@ -27,6 +28,14 @@ def same_origin(request: web.Request) -> bool:
     host = urlsplit(origin).netloc.lower()
     allowed = {request.host.lower(), request.headers.get("X-Forwarded-Host", "").lower()} - {""}
     return host in allowed
+
+
+def loopback(request: web.Request) -> bool:
+    """A browser on this computer (not a phone on the network): only it may open file dialogs here."""
+    try:
+        return ipaddress.ip_address(request.remote or "").is_loopback
+    except ValueError:
+        return False
 
 
 def make_app(hub: Hub, token: str) -> web.Application:
@@ -72,7 +81,7 @@ def make_app(hub: Hub, token: str) -> web.Application:
             raise web.HTTPForbidden(text="This page isn't hark.")
         ws = web.WebSocketResponse(heartbeat=20, max_msg_size=8 * 1024 * 1024)
         await ws.prepare(request)
-        await hub.connect(ws)
+        await hub.connect(ws, local=loopback(request))
         try:
             async for msg in ws:
                 if msg.type == WSMsgType.BINARY:
