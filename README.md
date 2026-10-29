@@ -49,7 +49,7 @@ The link includes a private key, and only browsers that have opened it can conne
 
 - **Click any line** to edit it. Enter saves, Shift+Enter adds a line, Esc cancels. Clear a line to delete it.
 - Click **Nothing yet** under an empty heading to write there. Tick checkboxes directly.
-- **More → Edit as text** gives you the whole document as Markdown.
+- **☰ → Edit as text** (☰ is the menu at the top right) gives you the whole document as Markdown.
 - **Undo** reverts the last change, whether you made it or Claude did.
 - **Tell Claude** (the box at the bottom) takes typed instructions, such as "make Actions a table" or "merge the two budget points". These are sent straight away.
 - **Say "Claude, …"** to give an instruction out loud, for example "Claude, swap questions four and five". hark updates as soon as you finish the sentence instead of waiting for the next update, and confirms what it did ("✓ Swapped Q4 and Q5"). Speech recognition sometimes writes the name as "Claw", "Clark" or "Cloud"; at the start of a sentence those count as "Claude" too.
@@ -59,7 +59,7 @@ The link includes a private key, and only browsers that have opened it can conne
 
 ## Starting from an agenda
 
-Use **More → Start from an agenda…** (or `hark --agenda agenda.md`) to start from a plan written beforehand. Paste it or load a file. The format is loose: an optional `# Title`, then one item per bullet or line. Indented lines under an item are notes on it.
+Use **☰ → Start from an agenda…** (or `hark --agenda agenda.md`) to start from a plan written beforehand. Paste it or load a file. The format is loose: an optional `# Title`, then one item per bullet or line. Indented lines under an item are notes on it.
 
 ```md
 # Research backlog ideas
@@ -72,6 +72,15 @@ Use **More → Start from an agenda…** (or `hark --agenda agenda.md`) to start
 - **For grilling**, each item becomes a numbered spec. One Claude call (usually 15–30 seconds) drafts each item's first questions before anyone speaks. It may also suggest a few facts to look up; these appear in the Research panel but don't start until you press **Research this**.
 
 If the current session already has something in it, the agenda starts a new session and the current one is kept.
+
+## Aims, time and "what's left?"
+
+hark can help keep a meeting on course. Give it what the meeting is for and when it ends, and ask it out loud where you've got to.
+
+- **Aims**: in the agenda dialog, list one or two things the meeting must achieve. They become a checklist above the agenda, and Claude ticks each one off once the group has clearly achieved it. In an agenda file, write `Aims: agree the budget split; pick a venue`, or a `## Aims` section of bullets. You can also say "Claude, our aim today is to agree the split."
+- **End time**: set it in the agenda dialog or **☰ → Meeting time…**, or put `Ends: 11:30` in an agenda file. You can also say it: "Claude, we finish at half eleven" or "we've got 15 minutes left". The bar and the room screen count down to it.
+- **Ask about the meeting**: "Claude, what else do we need to cover?", "are we on track?", "what did we decide about travel?", "who's doing the slides?". Claude answers from the notes and the discussion so far in a few sentences. For what's left, it puts aims not yet met first, then agenda items, and says what to prioritise or park if time is short. The answer pops up on the room screen, shows briefly on the page and stays in the Research panel. It isn't added to the document unless you ask.
+- **Reminder near the end** (off unless you tick it): 10 minutes before the end, if any aims or agenda items are still unticked, the room screen shows what's still open. It appears once, and only while hark is listening.
 
 ## Grilling
 
@@ -116,9 +125,9 @@ hark --add-corpus mikefsway/societal-immunity --about "transcripts, reading list
 hark --add-corpus ~/Documents/project-notes
 ```
 
-- **A GitHub repo** (`owner/repo` or its github.com link): hark makes its own copy, holding only the latest version. Before a search it fetches any changes from GitHub, if it hasn't checked in the last five minutes, so whatever anyone pushed is included. Private repos work if this computer is signed in to GitHub (`gh auth login`). If GitHub can't be reached, hark searches the copy it has and says so under **More → Collections**.
+- **A GitHub repo** (`owner/repo` or its github.com link): hark makes its own copy, holding only the latest version. Before a search it fetches any changes from GitHub, if it hasn't checked in the last five minutes, so whatever anyone pushed is included. Private repos work if this computer is signed in to GitHub (`gh auth login`). If GitHub can't be reached, hark searches the copy it has and says so under **☰ → Collections**.
 - **A folder on this computer** is read as it is, so your edits are always included. hark never runs `git pull` in a folder you work in; add the repo by name instead if you want that.
-- From the app, **More → Collections** lists your collections with when each was last read, and lets you **Update now**, **Remove** one, or add a GitHub repo, which is handy from a phone. Folders can only be added from the command line, so someone with your link can't point Claude at other folders on your computer.
+- From the app, **☰ → Collections** lists your collections with when each was last read, and lets you **Update now**, **Remove** one, or add a GitHub repo, which is handy from a phone. Folders can only be added from the command line, so someone with your link can't point Claude at other folders on your computer.
 - A running hark notices added and removed collections within a few seconds, without a restart.
 - The name is the folder or repo name, or give one with `NAME=FOLDER`. `--about` is optional; it helps Claude tell when a question is about these documents. To use a folder for one run only, start hark with `--corpus FOLDER` (repeatable). `hark --remove-corpus NAME` forgets a collection and deletes hark's copies of it, never your own folder.
 
@@ -134,12 +143,12 @@ hark --add-corpus ~/Documents/project-notes
 When hark is on a TV or projector in the room, or shared into a Teams call, show the **room screen** instead of the document. It's read-only and in large type, and it shows only what the group is on right now:
 
 - **Grilling**: the current item's top open question with its suggested answer ("Say *yes* to accept"), the other open questions, and the spec so far, with "?" for anything not yet settled.
-- **Meeting**: the topic under discussion, with the agenda alongside showing which item you're on. New decisions and actions appear in a banner for 45 seconds.
+- **Meeting**: the topic under discussion, with the aims and agenda alongside showing which item you're on, and the time left if an end time is set. New decisions and actions appear in a banner for 45 seconds.
 - **Co-writing** and **Notes**: the section being written, with the outline alongside.
 
 It follows the conversation by itself, moving to whichever part of the document last changed. The transcript, speaker names, working notes and editing controls never appear on it.
 
-- **More → Room screen** opens it in a new window. Drag that window onto the projector and press **F** for full screen. In a Teams call, share that window.
+- **☰ → Room screen** opens it in a new window. Drag that window onto the projector and press **F** for full screen. In a Teams call, share that window.
 - For a separate device such as a room PC or a smart TV, start hark with `--lan` and open the **Room screen** link it prints.
 - The buttons fade away when the mouse is still.
 
@@ -179,11 +188,11 @@ If a document is lost or ruined, you can build a fresh one from a transcript:
 hark --rebuild meeting.vtt
 ```
 
-This reads a Teams transcript (in Teams, open the meeting recap, then download the transcript as .vtt) or hark's own `transcript.md`, and has Claude write the document from it in a few large steps. A one-hour meeting takes a few minutes. The result is a new session, so nothing is overwritten; open it with **More → Open a previous session**. Use `--mode` to pick meeting, co-writing or notes. Hand edits aren't in any transcript, so they won't come back; use the versions file for those.
+This reads a Teams transcript (in Teams, open the meeting recap, then download the transcript as .vtt) or hark's own `transcript.md`, and has Claude write the document from it in a few large steps. A one-hour meeting takes a few minutes. The result is a new session, so nothing is overwritten; open it with **☰ → Open a previous session**. Use `--mode` to pick meeting, co-writing or notes. Hand edits aren't in any transcript, so they won't come back; use the versions file for those.
 
-Use **More → Open a previous session** to pick one up again, or **More → New session** to start fresh. Audio is never saved.
+Use **☰ → Open a previous session** to pick one up again, or **☰ → New session** to start fresh. Audio is never saved.
 
-To send the document to someone, use **More → Share…**, which opens your phone's share sheet (WhatsApp, email and so on) with the document as tidy text. **Share as file…** attaches it instead. Downloaded and shared files are named with the date and title, for example `2026-10-23 Budget review with finance.md`. On Android the shared file is a `.txt`, because Chrome won't share `.md` files.
+To send the document to someone, use **☰ → Share…**, which opens your phone's share sheet (WhatsApp, email and so on) with the document as tidy text. **Share as file…** attaches it instead. Downloaded and shared files are named with the date and title, for example `2026-10-23 Budget review with finance.md`. On Android the shared file is a `.txt`, because Chrome won't share `.md` files.
 
 ## Options
 
@@ -204,7 +213,7 @@ To send the document to someone, use **More → Share…**, which opens your pho
 | `--port 8765` | Local port. The phone port is this plus one. |
 | `--new-key` | Replace the access key, so old links and signed-in browsers stop working. |
 
-**More → Instructions for Claude** shows the brief Claude follows for the current session. You can rewrite it, for example "this is a supervision meeting; track the student's next steps", and set how often Claude updates. The defaults are every 20 seconds for meetings and every 5 seconds for co-writing.
+**☰ → Instructions for Claude** shows the brief Claude follows for the current session. You can rewrite it, for example "this is a supervision meeting; track the student's next steps", and set how often Claude updates. The defaults are every 20 seconds for meetings and every 5 seconds for co-writing.
 
 ## Choosing the AI service
 

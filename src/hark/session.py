@@ -59,6 +59,9 @@ class Session:
         self.done: list[str] = []  # Claude's recent "what I did" notes, so it doesn't redo an instruction
         self.stage: str | None = None  # heading line held on the room screen by choice; None = follow the talk
         self.showing: str | None = None  # what a room screen last said it shows, for "next section"
+        self.ends: float | None = None  # when the meeting is due to end, if anyone said
+        self.nudge = False  # remind the room near the end if aims or agenda items are still open
+        self.nudged = False  # ...and that reminder has been shown
 
     # -- paths / naming -----------------------------------------------------
     @property
@@ -111,7 +114,7 @@ class Session:
         if kind == "corpus" and not corpus:
             kind = "sources"
         job = {"id": self._next_research, "q": question.strip()[:500], "label": label.strip()[:120] or question.strip()[:120],
-               "origin": origin, "state": state, "kind": kind if kind in ("quick", "sources", "corpus") else "sources",
+               "origin": origin, "state": state, "kind": kind if kind in ("quick", "sources", "corpus", "meeting") else "sources",
                "created": time.time(), "answer": "", "items": [], "error": "", "took": 0}
         if job["kind"] == "corpus":
             job["corpus"] = corpus
@@ -154,6 +157,7 @@ class Session:
             "processed_id": self.lines[self.processed - 1]["id"] if self.processed else 0,
             "speakers": self.speakers.public(), "dir": str(self.dir),
             "research": self.research, "research_auto": self.research_auto, "corpus": self.corpus,
+            "ends": self.ends, "nudge": self.nudge,
         }
 
     # -- persistence --------------------------------------------------------
@@ -175,6 +179,7 @@ class Session:
             "doc": self.doc, "history": self.history[-20:], "lines": self.lines, "processed": self.processed,
             "next_line": self._next_line, "speakers": self.speakers.to_json(),
             "research": self.research, "research_auto": self.research_auto, "corpus": self.corpus, "next_research": self._next_research,
+            "ends": self.ends, "nudge": self.nudge, "nudged": self.nudged,
         }
         _atomic_write(self.dir / "session.json", json.dumps(state))
         if self._log:
@@ -210,7 +215,16 @@ class Session:
         s.research_auto = d.get("research_auto", True)
         s.corpus = d.get("corpus") if isinstance(d.get("corpus"), str) else None
         s._next_research = d.get("next_research", len(s.research) + 1)
+        s.ends = d.get("ends") if isinstance(d.get("ends"), (int, float)) else None
+        s.nudge, s.nudged = bool(d.get("nudge")), bool(d.get("nudged"))
         return s
+
+    def set_ends(self, ends: float | None, nudge: bool | None = None) -> None:
+        if ends != self.ends:
+            self.nudged = False  # a new end time gets its own reminder
+        self.ends = ends
+        if nudge is not None:
+            self.nudge = nudge
 
 
 def research_markdown(title: str, jobs: list[dict]) -> str:
@@ -221,6 +235,8 @@ def research_markdown(title: str, jobs: list[dict]) -> str:
             out += [j["answer"], ""]
         if j.get("kind") == "quick" and not j.get("items"):
             out += ["_Answered from Claude's own knowledge, without a source._", ""]
+        elif j.get("kind") == "meeting":
+            out += ["_Answered from this session's notes and discussion._", ""]
         for it in j.get("items", []):
             link = f" <{it['url']}>" if it.get("url") else (f" (`{it['path']}`)" if it.get("path") else "")
             out.append(f"- **{it['title']}**{link}" + (f": {it['note']}" if it.get("note") else ""))

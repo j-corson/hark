@@ -19,7 +19,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import agenda
+from . import agenda, timing
 from .docops import apply_ops, changed_lines, find_heading, rename_in_doc
 from .engine import SR, AudioStream, Engine
 from .research import KINDS, Researcher, clean, clean_url, clip, guess_kind
@@ -299,6 +299,7 @@ class Hub:
             await asyncio.sleep(0.5)
             try:
                 await self._watch_corpora()
+                await self._time_check()
                 if self._prep_due():
                     await self._prepare()
                 elif self._due():
@@ -326,6 +327,44 @@ class Hub:
         # Claude is only told about the session's own collection, so it can't pick another one.
         active = self.active_corpus(s)
         return [c for c in self.researcher.collections() if c["name"] == active]
+
+    # -- meeting time and answers ----------------------------------------------
+    async def _answered(self, s: Session, data: dict) -> None:
+        """Claude's answer to a question about the session ("what's left?"), and an end time someone said."""
+        ends = str(data.get("ends") or "").strip()
+        at = timing.parse_clock(ends, exact=True) if ends else None
+        if at and at > time.time() - 60 and at != s.ends:
+            s.set_ends(at)
+            s.save()
+            if s is self.session:
+                await self.push_state()
+                await self.broadcast({"type": "toast", "text": f"✓ This session ends at {timing.hhmm(at)}"})
+        a = data.get("answer")
+        text = clip(clean(a.get("text"), 1200), 600) if isinstance(a, dict) else ""
+        if not text:
+            return
+        label = clean(a.get("question"), 120) or "Your question"
+        job = s.add_research(label, "conversation", "done", label, kind="meeting")
+        job.update(answer=text, finished=time.time())
+        s.save()
+        await self.push_research(s, job)
+
+    async def _time_check(self) -> None:
+        """Near the end, if asked to, remind the room what's still open. Only while someone is listening."""
+        s = self.session
+        if not (s.ends and s.nudge and not s.nudged and self.listening):
+            return
+        now = time.time()
+        if not s.ends - timing.NUDGE_BEFORE <= now < s.ends:
+            return
+        s.nudged = True
+        text = timing.reminder(s.doc, now, s.ends)
+        if text:
+            label = f"{timing.minutes(s.ends - now).capitalize()} left"
+            job = s.add_research(label, "reminder", "done", label, kind="meeting")
+            job.update(answer=text, finished=now)
+            await self.push_research(s, job)
+        s.save()
 
     def _due(self) -> bool:
         s = self.session
@@ -355,7 +394,7 @@ class Hub:
         pending = s.lines[s.processed:upto]
         adds = [t for (ss, t) in self.promote if ss is s]
         self.promote = [(ss, t) for (ss, t) in self.promote if ss is not s]
-        requested = [j["q"] for j in s.research[-15:]]
+        requested = [j["q"] for j in s.research[-15:] if j.get("kind") != "meeting"]
         findings = research_findings(s)
         earlier = [said(s.fmt_line(l), l) for l in s.lines[max(0, s.processed - CONTEXT_LINES):s.processed] if l["kind"] == "speech"]
         new = [said(s.fmt_line(l), l) for l in pending if l["kind"] == "speech"]
@@ -369,7 +408,8 @@ class Hub:
         numbered = screen_sections(base, s.mode) if s.mode in ("outline", "notes") else None
         prompt = build_prompt(s.brief, base, s.speaker_notes(), earlier, new, typed, adds, requested, findings, s.done[-DONE_KEPT:],
                               on_screen=s.stage, sections=numbered, collections=self._collections_for(s),
-                              collections_unpicked=not self.active_corpus(s) and bool(self.researcher.collections()))
+                              collections_unpicked=not self.active_corpus(s) and bool(self.researcher.collections()),
+                              clock=timing.clock_note(time.time(), s.ends))
         detail = f"{len(pending)} new line{'s' * (len(pending) != 1)}" if pending else ""
         if adds:
             detail = (detail + ", " if detail else "") + "adding research"
@@ -387,6 +427,7 @@ class Hub:
             self.busy = False
             self.last_call = time.time()
         await self._requested_research(s, data.get("research") or [])
+        await self._answered(s, data)
         if s is not self.session:
             return  # session switched while Claude was thinking
         if data.get("tidy"):
@@ -396,12 +437,16 @@ class Hub:
         await self._maybe_release_held()
 
     # -- starting from an agenda ---------------------------------------------
-    async def load_agenda(self, text: str, mode: str | None = None) -> bool:
-        """Start the document from an agenda. A session that already has content is kept, and a new one started."""
-        text = (text or "").strip()[:agenda.MAX_CHARS]
+    async def load_agenda(self, text: str, mode: str | None = None, aims: list | None = None, ends: str = "",
+                          nudge: bool | None = None) -> bool:
+        """Start the document from an agenda. A session that already has content is kept, and a new one started.
+        Aims and an end time can come in the agenda text ("Aims: ...", "Ends: 11:30") or separately (the dialog)."""
+        text, more_aims, said_ends = agenda.plan((text or "").strip()[:agenda.MAX_CHARS])
+        aims = [str(a).strip()[:300] for a in (aims or []) if str(a).strip()][:10] + more_aims
         _title, _context, items = agenda.parse(text)
-        if not items:
+        if not items and not aims:
             return False
+        at = timing.parse_clock(ends, exact=True) if ends else timing.parse_clock(said_ends) if said_ends else None
         s = self.session
         mode = mode if mode in MODES else s.mode
         if not s.untouched:
@@ -409,9 +454,11 @@ class Hub:
             s = self._switch(Session(self.data_dir, mode=mode, threshold=self.threshold))
         else:
             s.set_mode(mode)
-        s.set_doc(agenda.layout(text, s.mode), by="agenda")
-        if s.mode == "grill" and self.scribe.available:
-            self.prep = (s, text)
+        s.set_doc(agenda.layout(text, s.mode, aims), by="agenda")
+        if at or nudge is not None:
+            s.set_ends(at or s.ends, nudge)
+        if s.mode == "grill" and self.scribe.available and items:
+            self.prep = (s, text, aims)
         s.save()
         await self.push_state()
         return True
@@ -420,7 +467,7 @@ class Hub:
         return bool(self.prep) and not self.busy and not self.held and not self.held_tidy and self.scribe.available
 
     async def _prepare(self) -> None:
-        s, text = self.prep
+        s, text, aims = self.prep
         self.prep = None
         if s is not self.session:
             return
@@ -429,7 +476,7 @@ class Hub:
         await self.push_status()
         base = s.doc
         try:
-            data, took = await self.scribe.prepare(agenda.build_prep_prompt(s.brief, text))
+            data, took = await self.scribe.prepare(agenda.build_prep_prompt(s.brief, text, aims))
         except ScribeError as e:
             self.claude = {"state": "error", "detail": f"couldn't prepare the questions: {e}"}
             log.warning("prepare: %s", e)
@@ -859,8 +906,19 @@ class Hub:
             self._switch(Session(self.data_dir, mode=msg.get("mode") or s.mode, threshold=self.threshold))
             await self.push_state()
         elif kind == "agenda":
-            if not await self.load_agenda(str(msg.get("text") or ""), msg.get("mode")):
-                await self.send(ws, {"type": "toast", "text": "No agenda items found. Put one item per line or bullet."})
+            aims = msg.get("aims") if isinstance(msg.get("aims"), list) else None
+            nudge = msg.get("nudge") if isinstance(msg.get("nudge"), bool) else None
+            if not await self.load_agenda(str(msg.get("text") or ""), msg.get("mode"), aims, str(msg.get("ends") or ""), nudge):
+                await self.send(ws, {"type": "toast", "text": "No agenda items or aims found. Put one item per line or bullet."})
+        elif kind == "timing":
+            ends = str(msg.get("ends") or "").strip()
+            at = timing.parse_clock(ends, exact=True) if ends else None
+            if ends and not at:
+                await self.send(ws, {"type": "toast", "text": "That end time wasn't a time of day, such as 11:30."})
+                return
+            s.set_ends(at, bool(msg.get("nudge")))
+            s.save()
+            await self.push_state()
         elif kind == "open_session":
             sid = msg.get("id", "")
             if sid and (self.data_dir / sid / "session.json").exists() and "/" not in sid and "\\" not in sid and ".." not in sid:

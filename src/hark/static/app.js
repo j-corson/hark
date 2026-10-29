@@ -43,7 +43,7 @@
       $("undoBtn").disabled = !m.session.can_undo;
       st.research = m.session.research || []; st.unseen.clear();
       $("autoRes").checked = !!m.session.research_auto;
-      setPicker();
+      setPicker(); renderClock();
       renderDoc(); renderTranscript(); renderSpeakers(); renderTitle(m.session.title); renderResearch();
     } else if (m.type === "research") {
       const i = st.research.findIndex((j) => j.id === m.job.id);
@@ -51,6 +51,7 @@
       if (i >= 0) st.research[i] = m.job; else st.research.push(m.job);
       if (m.job.state === "done" && (!prev || prev.state !== "done") && !researchVisible()) st.unseen.add(m.job.id);
       if (!prev && m.job.origin === "conversation" && !researchVisible()) st.unseen.add(m.job.id);
+      if (!prev && m.job.kind === "meeting" && m.job.answer) toast(`${m.job.label}: ${m.job.answer}`, 15000);
       renderResearch();
     } else if (m.type === "research_removed") {
       st.research = st.research.filter((j) => j.id !== m.id); st.unseen.delete(m.id);
@@ -489,7 +490,11 @@
       const mode = st.session && st.session.mode;
       $("agendaMode").value = mode === "grill" ? "grill" : "meeting";
       $("agendaFile").value = "";
+      $("agendaEnds").value = st.session && st.session.ends ? hhmm(st.session.ends) : "";
+      $("agendaNudge").checked = !!(st.session && st.session.nudge);
       $("agendaDlg").showModal();
+    } else if (act === "timing") {
+      openTiming();
     } else if (act === "corpora") {
       renderCorpList(); $("corpDlg").showModal();
     } else if (act === "sessions") {
@@ -507,11 +512,39 @@
   $("agendaDlg").addEventListener("close", () => {
     if ($("agendaDlg").returnValue !== "ok") return;
     const text = $("agendaText").value.trim();
-    if (!text) { toast("The agenda was empty, so nothing changed."); return; }
-    send({ type: "agenda", text, mode: $("agendaMode").value });
+    const aims = $("agendaAims").value.split("\n").map((a) => a.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "").trim()).filter(Boolean);
+    if (!text && !aims.length) { toast("The agenda was empty, so nothing changed."); return; }
+    send({ type: "agenda", text, mode: $("agendaMode").value, aims, ends: $("agendaEnds").value, nudge: $("agendaNudge").checked });
     st.fresh.clear();
-    $("agendaText").value = "";
+    $("agendaText").value = ""; $("agendaAims").value = "";
   });
+
+  // ---------------------------------------------------------------- meeting time
+  const hhmm = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  function openTiming() {
+    const s = st.session || {};
+    $("timeEnds").value = s.ends ? hhmm(s.ends) : "";
+    $("timeNudge").checked = !!s.nudge;
+    $("timeDlg").showModal();
+  }
+  $("timeDlg").addEventListener("close", () => {
+    const v = $("timeDlg").returnValue;
+    if (v === "ok") send({ type: "timing", ends: $("timeEnds").value, nudge: $("timeNudge").checked });
+    else if (v === "clear") send({ type: "timing", ends: "", nudge: false });
+  });
+  $("clock").onclick = openTiming;
+  // "Ends 11:30 · 14 min left", in the bar.
+  const span = (n) => (n < 90 ? `${n} min` : `${Math.floor(n / 60)} h${n % 60 ? ` ${n % 60} min` : ""}`);
+  function renderClock() {
+    const el = $("clock"), ends = st.session && st.session.ends;
+    el.hidden = !ends;
+    if (!ends) return;
+    const left = Math.round((ends - Date.now() / 1000) / 60);
+    el.textContent = left >= 0 ? `Ends ${hhmm(ends)} · ${span(left)} left` : `Due to end ${hhmm(ends)} · ${span(-left)} over`;
+    el.classList.toggle("soon", left >= 0 && left <= 10);
+    el.classList.toggle("over", left < 0);
+  }
+  setInterval(renderClock, 15000);
   $("briefDlg").addEventListener("close", () => {
     if ($("briefDlg").returnValue === "ok") send({ type: "set_brief", brief: $("briefText").value, interval: +$("intervalIn").value });
   });
@@ -619,6 +652,7 @@
   const ORIGIN = { conversation: "Picked up by Claude", typed: "Typed here" };
   function researchMeta(j) {
     const when = fmtTime(j.created);
+    if (j.kind === "meeting") return `${j.origin === "reminder" ? "Time reminder" : "Claude's answer, from the notes and discussion"} · ${when}`;
     const kind = j.kind === "corpus" ? `In ${j.corpus} · ` : ({ quick: "Quick look-up · ", sources: "Sources · " }[j.kind] || "");
     const how = `${kind}${ORIGIN[j.origin] || ""} · ${when}`;
     if (j.state === "proposed") return `${how} · Not started`;
@@ -631,11 +665,13 @@
   const safeUrl = (u) => (/^https?:\/\//i.test(u || "") ? u : "");
   function researchCard(j) {
     const li = document.createElement("li");
-    li.className = `rcard ${j.state}` + (st.unseen.has(j.id) ? " unseen" : "");
+    li.className = `rcard ${j.state} k-${j.kind}` + (st.unseen.has(j.id) ? " unseen" : "");
     li.dataset.id = j.id;
     let h = `<div class="rq" title="${esc(j.q)}">${esc(j.label || j.q)}</div><div class="rmeta">${esc(researchMeta(j))}</div>`;
     const quick = j.kind === "quick";
-    if (j.state === "done" && quick) {
+    if (j.kind === "meeting") {
+      if (j.answer) h += `<p class="ranswer quick">${esc(j.answer)}</p>`;
+    } else if (j.state === "done" && quick) {
       if (j.answer) h += `<p class="ranswer quick">${esc(j.answer)}</p>`;
       const it = j.items[0], u = it && safeUrl(it.url);
       h += it ? `<p class="rsource">Source: ${u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(it.title)}</a>` : esc(it.title)}</p>`
@@ -656,7 +692,8 @@
       }
     }
     const acts = [];
-    if (j.state === "proposed") acts.push(["run", "Research this", true], ["dismiss", "Dismiss"]);
+    if (j.kind === "meeting") acts.push(["dismiss", "Dismiss"]);
+    else if (j.state === "proposed") acts.push(["run", "Research this", true], ["dismiss", "Dismiss"]);
     else if (j.state === "queued" || j.state === "running") acts.push(["cancel", "Cancel"]);
     else if (j.state === "done" && quick) {
       if (j.answer && !j.added) acts.push(["addall", "Add to document", true]);
@@ -726,7 +763,7 @@
     const where = $("askWhere").value;
     $("askInput").placeholder = where ? "Ask these documents…" : "Look something up…";
   }
-  // More → Collections: add a GitHub repo, update or forget one.
+  // ☰ → Collections: add a GitHub repo, update or forget one.
   function renderCorpList() {
     const list = (st.status && st.status.corpora) || [];
     const ul = $("corpList");
@@ -765,10 +802,11 @@
   $("autoRes").onchange = () => send({ type: "research_auto", on: $("autoRes").checked });
 
   let toastTimer;
-  function toast(text) {
+  $("toast").onclick = () => { clearTimeout(toastTimer); $("toast").hidden = true; };
+  function toast(text, ms = 5000) {
     const t = $("toast");
     t.textContent = text; t.hidden = false;
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), 5000);
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), ms);
   }
 
   // ---------------------------------------------------------------- boot

@@ -23,7 +23,7 @@ LEADS = {"can", "could", "would", "will", "you", "now", "ok", "okay", "right", "
 STOP = {"the", "a", "an", "our", "section", "part", "on", "screen", "up", "now", "again"}
 NUMBERS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "
                                        "fourteen fifteen sixteen seventeen eighteen nineteen twenty".split())}
-MEETING_META = {"summary", "agenda", "decisions", "actions", "open questions"}
+MEETING_META = {"summary", "aims", "agenda", "decisions", "actions", "open questions"}
 STEP = re.compile(r"(?:go |move |skip |jump )?(?:(?:on |back |forward )?to )?(?:the )?(next|previous|prior) section|"
                   r"(?:go |move |skip |jump )?(back|forward) (?:a|one) section|(?:the )?section (before|after)(?: this)?")
 NUMBERED = re.compile(r"(?:section|part|number) (\w+)")

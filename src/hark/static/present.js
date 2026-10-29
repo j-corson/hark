@@ -24,6 +24,7 @@
     research: new Map(), // id -> look-up job, for quick answers
     popped: new Set(), // quick answers already shown (or done before this screen opened)
     lookup: null, // {id, until}: the quick answer on screen now
+    ends: null, // when the meeting is due to end, if set
   };
 
   // ---------------------------------------------------------------- socket
@@ -45,6 +46,8 @@
         st.touched.clear(); st.fresh.clear(); st.agreed = []; st.elsewhere = null;
       }
       st.mode = m.session.mode; st.doc = m.session.doc; st.stage = m.stage || null;
+      st.ends = m.session.ends || null;
+      renderClock();
       st.sections = new Set(m.sections || []);
       st.research = new Map((m.session.research || []).map((j) => [j.id, j]));
       for (const j of st.research.values()) if (j.state === "done") st.popped.add(`${st.sid}:${j.id}`);
@@ -277,10 +280,15 @@
     let html = "";
     if (st.mode === "meeting") {
       const ag = P.heads.find((h) => h.level === 2 && norm(h.text) === "agenda");
+      const aims = P.heads.find((h) => h.level === 2 && norm(h.text) === "aims");
+      if (aims) {
+        const list = P.lines.slice(aims.start + 1, aims.end).map((l) => l.match(/^[-*+]\s+\[([ xX])\]\s+(.*)$/)).filter(Boolean);
+        if (list.length) html += '<h2>Aims</h2><ol class="aims">' + list.map((m) => `<li class="${/x/i.test(m[1]) ? "done" : ""}">${inline(m[2])}</li>`).join("") + "</ol>";
+      }
       if (ag) {
         const items = P.lines.slice(ag.start + 1, ag.end).map((l) => l.match(/^\s*[-*+]\s+\[([ xX])\]\s+(.*)$/)).filter(Boolean);
         let now = false;
-        html = "<h2>Agenda</h2><ol>" + items.map((m) => {
+        html += "<h2>Agenda</h2><ol>" + items.map((m) => {
           const done = /x/i.test(m[1]);
           const cur = !done && !now; if (cur) now = true;
           return `<li class="${done ? "done" : cur ? "cur" : ""}">${inline(m[2])}</li>`;
@@ -288,7 +296,7 @@
         if (items.length) html += `<p class="count">${items.filter((m) => /x/i.test(m[1])).length} of ${items.length} done</p>`;
       } else {
         const topics = nav.filter((h) => h.level === 3);
-        if (topics.length > 1) html = "<h2>Topics</h2>" + navItems(topics, focus);
+        if (topics.length > 1) html += "<h2>Topics</h2>" + navItems(topics, focus);
       }
     } else if (nav.length > 1) {
       html = `<h2>${st.mode === "grill" ? "Items" : "Outline"}</h2>` + navItems(nav, focus, st.mode !== "grill");
@@ -391,7 +399,8 @@
   // A quick answer pops up over the notes for long enough to read it aloud, then goes.
   // Requests for sources stay in the Research panel: a reading list doesn't read across a room.
   // Answers from the group's own documents are short, so they pop up too.
-  const onScreen = (j) => j.kind === "quick" || j.kind === "corpus";
+  // So do Claude's answers about the meeting itself ("what's left?") and the reminder near the end.
+  const onScreen = (j) => j.kind === "quick" || j.kind === "corpus" || j.kind === "meeting";
   function renderLooking() {
     const busy = [...st.research.values()].filter((j) => onScreen(j) && (j.state === "queued" || j.state === "running"));
     const el = $("looking");
@@ -404,14 +413,16 @@
     const it = j.items && j.items[0];
     let host = "";
     try { host = it && it.url ? new URL(it.url).hostname.replace(/^www\./, "") : ""; } catch (_) { /* not a URL */ }
-    const corpus = j.kind === "corpus";
-    const src = corpus ? (j.items.length ? `From: ${j.items.slice(0, 3).map((i) => esc(i.title)).join("; ")}` : `Nothing found in ${esc(j.corpus)}`)
+    const corpus = j.kind === "corpus", meeting = j.kind === "meeting";
+    const src = meeting ? (j.origin === "reminder" ? "" : "From the notes and discussion so far") : corpus ? (j.items.length ? `From: ${j.items.slice(0, 3).map((i) => esc(i.title)).join("; ")}` : `Nothing found in ${esc(j.corpus)}`)
       : it ? `Source: ${esc(it.title)}${host ? ` <span class="host">${esc(host)}</span>` : ""}`
       : "From Claude's own knowledge, not checked against a source";
     const el = $("lookup");
     const answer = clip(j.answer, 700);
     const more = answer !== j.answer ? '<span class="more"> The full answer is in the Research panel.</span>' : "";
-    el.innerHTML = `<p class="kicker">${corpus ? `From ${esc(j.corpus)}` : "Quick look-up"}</p><h2>${esc(j.label || j.q)}</h2><p class="answer">${esc(answer)}${more}</p><p class="src">${src}</p>`;
+    const kicker = meeting ? (j.origin === "reminder" ? "Time check" : "Claude") : corpus ? `From ${esc(j.corpus)}` : "Quick look-up";
+    el.innerHTML = `<p class="kicker">${kicker}</p><h2>${esc(j.label || j.q)}</h2><p class="answer">${esc(answer)}${more}</p>` +
+      (src ? `<p class="src">${src}</p>` : "");
     el.hidden = false;
     // A long answer gets smaller type rather than being cut off.
     let s = 1;
@@ -480,7 +491,20 @@
     const h = n && P && P.heads.find((x) => x.text === n);
     if (h) setStage(headLine(P, h));
   };
+  // "14 min left" in the top bar, once an end time is set.
+  function renderClock() {
+    const el = $("clock");
+    el.hidden = !st.ends;
+    if (!st.ends) return;
+    const left = Math.round((st.ends - Date.now() / 1000) / 60);
+    const at = new Date(st.ends * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+    const span = (n) => (n < 90 ? `${n} min` : `${Math.floor(n / 60)} h${n % 60 ? ` ${n % 60} min` : ""}`);
+    el.textContent = left >= 0 ? `${span(left)} left · ends ${at}` : `${span(-left)} over · was due ${at}`;
+    el.classList.toggle("soon", left >= 0 && left <= 10);
+    el.classList.toggle("over", left < 0);
+  }
   setInterval(() => {
+    renderClock();
     if (st.agreed.length) renderAgreed(st.P || parse(st.doc));
     if (st.elsewhere) renderElsewhere();
   }, 3000);

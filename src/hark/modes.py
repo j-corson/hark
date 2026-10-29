@@ -11,6 +11,7 @@ MODES = {
         "brief": """Keep a running record of this meeting that someone can glance at mid-conversation.
 
 - Summary: 2-6 bullets saying what the meeting is about and where it has got to. Revise these as things move on; don't let them grow into a log.
+- Aims, if there are any: what the meeting is meant to achieve, as a checklist. Keep their wording. Tick an aim (`- [x]`) once the group has clearly achieved it.
 - Agenda, if there is one: the plan, written before the meeting. Keep its items and wording. Tick an item (`- [x]`) once the group has finished with it, and add or drop items only when the group says so.
 - Discussion: one ### sub-heading per topic or agenda item, with short bullets of the substance (facts, figures, positions, reasons). Not a transcript. When a topic comes back, update its bullets rather than adding near-repeats.
 - Decisions: things the group actually agreed.

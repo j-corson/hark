@@ -19,7 +19,7 @@ from aiohttp import web
 
 from . import __version__
 from . import config as settings_file
-from .agenda import parse as parse_agenda
+from .agenda import parse as parse_agenda, plan as agenda_plan
 from .backends import PROVIDERS, make_backend
 from .config import CONFIG, config_dir, write_private
 from .modes import MODES
@@ -292,8 +292,8 @@ def main(argv: list[str] | None = None) -> None:
     async def run():
         if agenda_text is not None:
             if not await hub.load_agenda(agenda_text, args.mode):
-                raise SystemExit(f"No agenda items found in {args.agenda}. Put one item per bullet or line.")
-            n = len(parse_agenda(agenda_text)[2])
+                raise SystemExit(f"No agenda items or aims found in {args.agenda}. Put one item per bullet or line.")
+            n = len(parse_agenda(agenda_plan(agenda_text)[0])[2])
             print(f"  Agenda: {n} item{'s' * (n != 1)} from {args.agenda}"
                   + (" (Claude is drafting first questions)" if hub.prep else ""), flush=True)
         runner = web.AppRunner(app, access_log=None)

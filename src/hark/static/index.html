@@ -23,11 +23,12 @@
     <span id="meters" class="meters" aria-hidden="true"></span>
   </div>
   <div id="status" class="status" role="status" aria-live="polite"></div>
+  <button id="clock" class="quiet clock" type="button" hidden title="When this session ends. Click to change."></button>
   <div class="tools">
     <select id="modeSel" aria-label="Document type"></select>
     <button id="tidyBtn" type="button" class="quiet" title="Have Claude consolidate the document: drop what was superseded, merge repeats">Tidy</button>
     <button id="undoBtn" type="button" class="quiet" disabled title="Undo the last change">Undo</button>
-    <button id="menuBtn" type="button" class="quiet" aria-haspopup="true" aria-label="More">More</button>
+    <button id="menuBtn" type="button" class="quiet menubtn" aria-haspopup="true" aria-label="More" title="More"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
     <div id="moreMenu" class="popover right" hidden>
       <button type="button" data-act="present">Room screen</button>
       <button type="button" data-act="edit">Edit as text</button>
@@ -37,6 +38,7 @@
       <button type="button" data-act="copy">Copy Markdown</button>
       <button type="button" data-act="download">Download .md</button>
       <button type="button" data-act="agenda">Start from an agenda…</button>
+      <button type="button" data-act="timing">Meeting time…</button>
       <button type="button" data-act="brief">Instructions for Claude…</button>
       <button type="button" data-act="corpora">Collections…</button>
       <button type="button" data-act="sessions">Open a previous session…</button>
@@ -113,9 +115,29 @@
         <option value="grill">grilling: Claude drafts first questions</option>
       </select>
     </label>
-    <textarea id="agendaText" rows="12" placeholder="# Research backlog ideas&#10;- Ofgem consultation responses: how supplier views on flexibility changed&#10;  - every response since 2010?&#10;- Half-hourly smart meter data for 1,000 homes"></textarea>
+    <textarea id="agendaText" rows="7" placeholder="# Research backlog ideas&#10;- Ofgem consultation responses: how supplier views on flexibility changed&#10;  - every response since 2010?&#10;- Half-hourly smart meter data for 1,000 homes"></textarea>
     <label class="inline file">Or load a file <input type="file" id="agendaFile" accept=".md,.markdown,.txt,text/plain,text/markdown"></label>
+    <label class="inline">Aims (optional): what the meeting must achieve, one per line
+      <textarea id="agendaAims" rows="2" placeholder="Agree the budget split&#10;Pick a venue for March"></textarea>
+    </label>
+    <div class="timing">
+      <label class="inline">Ends at (optional) <input type="time" id="agendaEnds"></label>
+      <label class="check"><input type="checkbox" id="agendaNudge"> Remind us 10 minutes before the end if anything's still open</label>
+    </div>
     <div class="row"><button value="cancel" class="quiet">Cancel</button><button value="ok" class="primary">Start</button></div>
+  </form>
+</dialog>
+
+<dialog id="timeDlg">
+  <form method="dialog" class="dlg">
+    <h2>Meeting time</h2>
+    <p class="hint">Claude uses this when you ask “what else do we need to cover?”, and the room screen counts down to it. You can also say it out loud: “Claude, we finish at half eleven.”</p>
+    <div class="timing">
+      <label class="inline">Ends at <input type="time" id="timeEnds"></label>
+      <label class="check"><input type="checkbox" id="timeNudge"> Remind us 10 minutes before the end if aims or agenda items are still open</label>
+    </div>
+    <p class="hint">The reminder shows on the room screen and in the Research panel, only while hark is listening.</p>
+    <div class="row"><button value="clear" class="quiet" id="timeClear">No end time</button><button value="cancel" class="quiet">Cancel</button><button value="ok" class="primary">Save</button></div>
   </form>
 </dialog>
 
