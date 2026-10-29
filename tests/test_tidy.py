@@ -85,7 +85,7 @@ class FakeScribe:
 
 
 def make_hub(tmp_path, scribe):
-    hub = Hub(SimpleNamespace(backlog=0.0, asr_name="x"), scribe, tmp_path, researcher=SimpleNamespace(available=False))
+    hub = Hub(SimpleNamespace(backlog=0.0, asr_name="x"), scribe, tmp_path, researcher=SimpleNamespace(available=False, collections=lambda: [], find=lambda n: None))
     hub.session.mode = "outline"
     hub.session.set_doc(DOC, by="claude")
     return hub

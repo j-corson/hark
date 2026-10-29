@@ -20,7 +20,7 @@ class Sent:
 
 def make_hub(tmp_path):
     hub = Hub(SimpleNamespace(backlog=0.0, asr_name="x"), SimpleNamespace(available=True, model="fake"), tmp_path,
-              researcher=SimpleNamespace(available=True))
+              researcher=SimpleNamespace(available=True, collections=lambda: [], find=lambda n: None))
     hub.session.set_doc("# Notes\n\n## Budget\n- tight\n", by="claude")
     ws = Sent()
     hub.clients[ws] = SimpleNamespace(editing=False, streams={})

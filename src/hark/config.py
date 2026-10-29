@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 
 from .backends import PROVIDERS, OpenAICompatible
+from .corpus import Corpus, make_spec, read_saved
 
 CONFIG = Path(os.environ.get("HARK_CONFIG", Path.home() / ".config" / "hark"))
 KEYS = ("provider", "model", "research_model", "base_url", "api_key")
@@ -38,19 +39,59 @@ def write_private(path: Path, data: bytes) -> None:
         pass
 
 
-def load() -> dict:
+def _raw() -> dict:
     try:
         data = json.loads((CONFIG / "config.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
-    return {k: v for k, v in data.items() if k in KEYS and isinstance(v, str) and v}
+    return data if isinstance(data, dict) else {}
 
 
-def save(settings: dict) -> Path:
+def load() -> dict:
+    return {k: v for k, v in _raw().items() if k in KEYS and isinstance(v, str) and v}
+
+
+def config_file() -> Path:
+    return CONFIG / "config.json"
+
+
+def load_corpora() -> list[dict]:
+    """Saved collections: [{"name", "path", "about", "repo"}]."""
+    return read_saved(config_file())
+
+
+def save(settings: dict, corpora: list[dict] | None = None) -> Path:
+    """Save the service settings. Saved collections are kept unless new ones are given."""
     path = config_dir() / "config.json"
     clean = {k: v for k, v in settings.items() if k in KEYS and v}
+    keep = load_corpora() if corpora is None else corpora
+    if keep:
+        clean["corpora"] = keep
     write_private(path, (json.dumps(clean, indent=2) + "\n").encode())
     return path
+
+
+def save_corpora(corpora: list[dict]) -> Path:
+    return save(load(), corpora)
+
+
+def add_corpus(spec: str, about: str = "", local: bool = True) -> dict:
+    """Save a folder or a GitHub repo (cloned first) as a collection, replacing one of the same name."""
+    new = make_spec(spec, about, local)
+    save_corpora([c for c in load_corpora() if c["name"] != new["name"]] + [new])
+    return new
+
+
+def remove_corpus(name: str) -> bool:
+    """Forget a saved collection, and delete hark's copies of it (never your own folder)."""
+    saved = load_corpora()
+    gone = [c for c in saved if c["name"] == name]
+    if not gone:
+        return False
+    save_corpora([c for c in saved if c["name"] != name])
+    for c in gone:
+        Corpus(c["name"], c["path"], repo=c.get("repo", "")).forget()
+    return True
 
 
 def _ask(prompt: str, default: str = "", secret: bool = False) -> str:

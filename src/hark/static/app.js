@@ -43,6 +43,7 @@
       $("undoBtn").disabled = !m.session.can_undo;
       st.research = m.session.research || []; st.unseen.clear();
       $("autoRes").checked = !!m.session.research_auto;
+      setPicker();
       renderDoc(); renderTranscript(); renderSpeakers(); renderTitle(m.session.title); renderResearch();
     } else if (m.type === "research") {
       const i = st.research.findIndex((j) => j.id === m.job.id);
@@ -74,7 +75,8 @@
       appendLine(m.line);
       renderSpeakers();
     } else if (m.type === "status") {
-      st.status = m; renderStatus(); markPending();
+      st.status = m; renderStatus(); markPending(); renderCorpora(m.corpora || []);
+      if ($("corpDlg").open) renderCorpList();
     } else if (m.type === "toast") {
       toast(m.text);
     }
@@ -488,6 +490,8 @@
       $("agendaMode").value = mode === "grill" ? "grill" : "meeting";
       $("agendaFile").value = "";
       $("agendaDlg").showModal();
+    } else if (act === "corpora") {
+      renderCorpList(); $("corpDlg").showModal();
     } else if (act === "sessions") {
       renderSessions(); $("sessDlg").showModal();
     } else if (act === "new") {
@@ -537,7 +541,8 @@
       if (j.answer) out += one(j.answer) + "\n\n";
       for (const it of j.items) {
         const u = safeUrl(it.url);
-        out += `- ${u ? `[${one(it.title)}](${u})` : one(it.title)}${it.note ? `: ${one(it.note)}` : ""}\n`;
+        const name = u ? `[${one(it.title)}](${u})` : one(it.title) + (it.path ? ` (\`${one(it.path)}\`)` : "");
+        out += `- ${name}${it.note ? `: ${one(it.note)}` : ""}\n`;
       }
       if (j.kind === "quick" && !j.items.length) out += "_From Claude's own knowledge, without a source._\n";
     }
@@ -614,10 +619,11 @@
   const ORIGIN = { conversation: "Picked up by Claude", typed: "Typed here" };
   function researchMeta(j) {
     const when = fmtTime(j.created);
-    const how = `${{ quick: "Quick look-up · ", sources: "Sources · " }[j.kind] || ""}${ORIGIN[j.origin] || ""} · ${when}`;
+    const kind = j.kind === "corpus" ? `In ${j.corpus} · ` : ({ quick: "Quick look-up · ", sources: "Sources · " }[j.kind] || "");
+    const how = `${kind}${ORIGIN[j.origin] || ""} · ${when}`;
     if (j.state === "proposed") return `${how} · Not started`;
     if (j.state === "queued") return `${how} · Waiting for a free slot`;
-    if (j.state === "running") return `Researching… ${Math.max(0, Math.round(Date.now() / 1000 - (j.started || j.created)))}s`;
+    if (j.state === "running") return `${j.kind === "corpus" ? `Searching ${j.corpus}` : "Researching"}… ${Math.max(0, Math.round(Date.now() / 1000 - (j.started || j.created)))}s`;
     if (j.state === "done") return `${how} · Found in ${j.took || 0}s`;
     if (j.state === "cancelled") return `${how} · Cancelled`;
     return `Couldn't finish: ${j.error || "unknown error"}`;
@@ -640,7 +646,8 @@
         h += '<ul class="ritems">';
         j.items.forEach((it, i) => {
           const u = safeUrl(it.url);
-          const t = u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(it.title)}</a>` : esc(it.title);
+          const t = (u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(it.title)}</a>` : esc(it.title)) +
+            (it.path ? `<span class="p">${esc(it.path)}</span>` : "");
           h += `<li class="${it.added ? "added" : ""}"><span class="t">${t}</span>` +
             `<button type="button" class="quiet" data-ract="add" data-i="${i}" ${it.added ? "disabled" : ""}>${it.added ? "Added" : "Add"}</button>` +
             (it.note ? `<span class="n">${esc(it.note)}</span>` : "") + "</li>";
@@ -693,8 +700,67 @@
     e.preventDefault();
     const v = $("askInput").value.trim();
     if (!v) return;
+    const where = $("askWhere").value;
     send({ type: "research_ask", q: v });
     $("askInput").value = "";
+  };
+  // Where a typed request goes: the web, or one of the user's own collections.
+  let corporaKey = null;
+  function renderCorpora(list) {
+    const key = list.map((c) => c.name).join("\n");
+    if (key === corporaKey) return;
+    corporaKey = key;
+    const sel = $("askWhere");
+    sel.innerHTML = '<option value="">Web</option>' + list.map((c) =>
+      `<option value="${esc(c.name)}" title="${esc(c.about || "")}">${esc(c.name)}</option>`).join("");
+    sel.hidden = !list.length;
+    setPicker();
+  }
+  // The picker is the session's setting: the one collection Claude may search, typed or spoken.
+  function setPicker() {
+    const sel = $("askWhere"), want = (st.session && st.session.corpus) || "";
+    sel.value = [...sel.options].some((o) => o.value === want) ? want : "";
+    askHint();
+  }
+  function askHint() {
+    const where = $("askWhere").value;
+    $("askInput").placeholder = where ? "Ask these documents…" : "Look something up…";
+  }
+  // More → Collections: add a GitHub repo, update or forget one.
+  function renderCorpList() {
+    const list = (st.status && st.status.corpora) || [];
+    const ul = $("corpList");
+    ul.innerHTML = list.map((c) => {
+      const when = c.updated ? `updated ${fmtTime(c.updated)}` : "not read yet";
+      const what = `${c.repo ? `GitHub: ${esc(c.repo)}` : esc(c.where)} · ${c.files} files · ${when}`;
+      return `<li data-name="${esc(c.name)}"><span class="n">${esc(c.name)}</span>` +
+        `<span class="b"><button type="button" class="quiet" data-cact="update">Update now</button>` +
+        (c.saved ? '<button type="button" class="quiet" data-cact="remove">Remove</button>' : "") + "</span>" +
+        `<span class="m">${what}</span>` + (c.about ? `<span class="m">${esc(c.about)}</span>` : "") +
+        (c.problem ? `<span class="m bad">${esc(c.problem)}</span>` : "") + "</li>";
+    }).join("");
+    $("corpNone").hidden = list.length > 0;
+  }
+  $("corpList").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-cact]");
+    if (!b) return;
+    const name = b.closest("li").dataset.name;
+    if (b.dataset.cact === "remove" && !confirm(`Forget ${name}? Your own files aren't touched.`)) return;
+    send({ type: `corpus_${b.dataset.cact}`, name });
+    if (b.dataset.cact === "update") toast(`Updating ${name}…`);
+  });
+  $("corpAdd").onclick = () => {
+    const spec = $("corpSpec").value.trim();
+    if (!spec) { $("corpSpec").focus(); return; }
+    send({ type: "corpus_add", spec, about: $("corpAbout").value.trim() });
+    $("corpSpec").value = ""; $("corpAbout").value = "";
+  };
+  for (const id of ["corpSpec", "corpAbout"]) {
+    $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("corpAdd").click(); } });
+  }
+  $("askWhere").onchange = () => {
+    send({ type: "research_corpus", name: $("askWhere").value });
+    askHint();
   };
   $("autoRes").onchange = () => send({ type: "research_auto", on: $("autoRes").checked });
 

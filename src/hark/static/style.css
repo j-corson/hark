@@ -132,6 +132,8 @@ select { background: transparent; border: 1px solid var(--line); border-radius: 
 /* research */
 .ask { display: flex; gap: 6px; }
 .ask input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 8px 11px; background: var(--sheet); }
+.ask select { flex: 0 1 auto; max-width: 40%; min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 8px 6px; background: var(--sheet); color: inherit; font: inherit; font-size: 14px; }
+.ask select[hidden] { display: none; }
 .autores { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); margin: 8px 2px 10px; }
 .autores input { accent-color: var(--act); margin: 0; }
 .research { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
@@ -154,6 +156,7 @@ select { background: transparent; border: 1px solid var(--line); border-radius: 
 .ritems .t { font-weight: 600; overflow-wrap: anywhere; }
 .ritems .t a { color: var(--act); text-decoration: none; }
 .ritems .t a:hover { text-decoration: underline; }
+.ritems .t .p { display: block; font-weight: 400; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .ritems .n { grid-column: 1; color: var(--muted); font-size: 14px; }
 .ritems button, .ractions button { font-size: 13px; padding: 4px 9px; border: 1px solid var(--line); }
 .ritems button { grid-column: 2; grid-row: 1 / span 2; }
@@ -193,6 +196,14 @@ dialog::backdrop { background: color-mix(in srgb, #000 40%, transparent); }
 .dlg .inline select { display: block; width: 100%; margin-top: 4px; border: 1px solid var(--line); border-radius: 6px; padding: 6px; background: var(--sheet); }
 .dlg .inline.file input { width: auto; max-width: 100%; border: 0; padding: 0; }
 .dlg .row { display: flex; justify-content: flex-end; gap: 8px; }
+.corplist { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.corplist li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.corplist .n { font-weight: 700; }
+.corplist .m { grid-column: 1; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.corplist .m.bad { color: var(--err); }
+.corplist .b { grid-column: 2; grid-row: 1 / span 3; display: flex; gap: 6px; }
+.corplist .b button { font-size: 13px; padding: 4px 9px; border: 1px solid var(--line); }
+.dlg .inline input#corpSpec, .dlg .inline input#corpAbout { display: block; width: 100%; margin-top: 4px; padding: 7px 9px; }
 .sesslist { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow-y: auto; }
 .sesslist button { width: 100%; text-align: left; display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; }
 .sesslist button:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }

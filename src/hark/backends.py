@@ -100,6 +100,12 @@ class Backend:
                        effort: str | None = None, timeout: float = 360, hint: str = "") -> tuple[dict, float]:
         raise ScribeError("Web research needs Claude: your Claude subscription or an Anthropic API key")
 
+    can_search_corpus = False
+
+    async def search_corpus(self, system: str, schema: dict, prompt: str, corpus, *, model: str | None = None,
+                            effort: str | None = None, timeout: float = 300, hint: str = "") -> tuple[dict, float]:
+        raise ScribeError("Searching your documents needs Claude: your Claude subscription or an Anthropic API key")
+
 
 # -- Claude Code CLI (your subscription) ---------------------------------------
 
@@ -133,6 +139,7 @@ class ClaudeCode(Backend):
 
     kind = "claude-code"
     RESEARCH_TOOLS = "WebSearch,WebFetch"
+    CORPUS_TOOLS = "Read,Grep,Glob"
 
     def __init__(self, model: str = "sonnet", claude_bin: str | None = None):
         super().__init__(model)
@@ -143,7 +150,8 @@ class ClaudeCode(Backend):
         if self.bin:
             try:
                 h = subprocess.run([self.bin, "--help"], capture_output=True, text=True, timeout=30).stdout
-                self.flags = {f for f in ("--safe-mode", "--no-session-persistence", "--json-schema", "--tools", "--effort", "--strict-mcp-config") if f in h}
+                self.flags = {f for f in ("--safe-mode", "--no-session-persistence", "--json-schema", "--tools", "--effort", "--strict-mcp-config",
+                                                 "--add-dir", "--restricted", "--permission-mode") if f in h}
             except Exception:
                 pass
 
@@ -162,6 +170,11 @@ class ClaudeCode(Backend):
     @property
     def can_research(self) -> bool:
         return self.available and "--tools" in self.flags
+
+    @property
+    def can_search_corpus(self) -> bool:
+        # --restricted is what keeps the file tools inside the collection's folder.
+        return self.available and {"--tools", "--add-dir", "--restricted"} <= self.flags
 
     def _system_file(self, text: str) -> str:
         # Pass the prompt as a file: long multi-line arguments get mangled by Windows .cmd shims.
@@ -231,6 +244,17 @@ class ClaudeCode(Backend):
         if not self.can_research:
             raise ScribeError("Research needs a recent Claude Code CLI")
         return await self._run(self._cmd(system, schema, effort, model or self.model, self.RESEARCH_TOOLS), prompt, hint, timeout)
+
+    async def search_corpus(self, system, schema, prompt, corpus, *, model=None, effort=None, timeout=300, hint=""):
+        if not self.can_search_corpus:
+            raise ScribeError("Searching your documents needs a recent Claude Code CLI (run `claude update`)")
+        cmd = self._cmd(system, schema, effort, model or self.model, self.CORPUS_TOOLS)
+        # Read-only tools, confined to the collection's text copy (and hark's own temp folder).
+        cmd += ["--add-dir", str(corpus.mirror), "--restricted"]
+        if "--permission-mode" in self.flags:
+            cmd += ["--permission-mode", "dontAsk"]
+        prompt = f"The collection's files are in the folder {corpus.mirror}. Search there.\n\n{prompt}"
+        return await self._run(cmd, prompt, hint, timeout)
 
 
 # -- Anthropic API ---------------------------------------------------------------
@@ -364,6 +388,35 @@ class AnthropicAPI(Backend):
         # The answer is the text after the last search or fetch result; citations split it into several blocks.
         last = max((i for i, b in enumerate(msg.content) if b.type.endswith("_tool_result")), default=-1)
         return parse_json("".join(b.text for b in msg.content[last + 1:] if b.type == "text")), time.time() - t
+
+    can_search_corpus = True
+    CORPUS_ROUNDS = 15
+
+    async def search_corpus(self, system, schema, prompt, corpus, *, model=None, effort=None, timeout=300, hint=""):
+        """A tool loop over hark's own read-only tools (list, search, read), which only see the collection's text copy."""
+        t = time.time()
+        model = self._model(model)
+        prompt = "Use the list_files, search and read tools to look through the collection.\n\n" + prompt
+        messages = [{"role": "user", "content": prompt + (f"\n\nWhen you're done, reply with only a JSON object: {hint}" if hint else "")}]
+        for i in range(self.CORPUS_ROUNDS):
+            remaining = timeout - (time.time() - t)
+            if remaining < 5:
+                raise ScribeError("Searching the documents took too long")
+            last = i == self.CORPUS_ROUNDS - 1
+            kw = {"model": model, "max_tokens": self.MAX_TOKENS, "system": system, "messages": messages, "tools": corpus.TOOLS}
+            if last:
+                kw["tool_choice"] = {"type": "none"}  # out of rounds: answer from what it has read
+            msg = await self._create(kw, effort, remaining)
+            if msg.stop_reason != "tool_use":
+                break
+            results = []
+            for b in msg.content:
+                if b.type == "tool_use":
+                    out = await asyncio.to_thread(corpus.run_tool, b.name, b.input)
+                    results.append({"type": "tool_result", "tool_use_id": b.id, "content": out})
+            messages += [{"role": "assistant", "content": msg.content}, {"role": "user", "content": results}]
+        self._check_stop(msg)
+        return parse_json("".join(b.text for b in msg.content if b.type == "text")), time.time() - t
 
 
 # -- any OpenAI-compatible API ---------------------------------------------------

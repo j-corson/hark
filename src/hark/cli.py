@@ -110,6 +110,48 @@ def build_scribe(args):
     return Scribe(backend, args.effort), cfg
 
 
+def build_corpora(args):
+    """Saved collections (re-read whenever the config file changes) plus any given with --corpus."""
+    from .corpus import Library, parse_spec
+
+    extra = []
+    for spec in args.corpus:
+        name, path = parse_spec(spec)
+        if os.path.isdir(path):
+            extra.append({"name": name, "path": os.path.abspath(path), "about": "", "repo": ""})
+        else:
+            print(f"  ! --corpus {spec}: no such folder; skipping it.", file=sys.stderr)
+    return Library(settings_file.config_file(), extra)
+
+
+async def prepare_corpora(corpora) -> None:
+    """Build each collection's text copy in the background, so the first search doesn't wait for it."""
+    log = logging.getLogger("hark")
+    for c in corpora:
+        try:
+            n = await asyncio.to_thread(c.sync)
+            log.info("collection %s: %d files ready (%d updated, %d not text)", c.name, n["files"], n["changed"], n["skipped"])
+        except Exception as e:
+            log.warning("collection %s: %s", c.name, e)
+
+
+def manage_corpora(args) -> None:
+    if args.remove_corpus:
+        if not settings_file.remove_corpus(args.remove_corpus):
+            saved = ", ".join(c["name"] for c in settings_file.load_corpora()) or "none"
+            raise SystemExit(f"No saved collection called {args.remove_corpus!r}. Saved: {saved}")
+        print(f"Forgot the collection {args.remove_corpus!r}.")
+        return
+    try:
+        c = settings_file.add_corpus(args.add_corpus, args.about)
+    except (OSError, ValueError) as e:
+        raise SystemExit(str(e))
+    what = f"GitHub repo {c['repo']} (hark keeps its own copy up to date)" if c["repo"] else c["path"]
+    print(f"Saved the collection {c['name']!r}: {what}.")
+    print(f'A running hark picks it up straight away. Ask for it by name ("Claude, what do the {c["name"]} documents say about ...?")'
+          " or pick it in the Research panel.")
+
+
 def check(args) -> None:
     from . import models
     from .scribe import build_prompt
@@ -135,6 +177,17 @@ def check(args) -> None:
         raise SystemExit(f"  failed: {e}\n  {hint}, then try again.")
     print(f"  ok: {len(data.get('ops', []))} edit(s) in {took:.1f}s", flush=True)
     print("  Web research: " + ("available" if sc.backend.can_research else "not available with this service (it needs Claude)"))
+    for c in build_corpora(args).current().values():
+        if not sc.backend.can_search_corpus:
+            print(f"  Collection {c.name}: can't be searched with this service (it needs Claude, and a recent Claude Code)")
+            continue
+        try:
+            n = c.sync()
+            print(f"  Collection {c.name}: {n['files']} files ready to search" + (f", {n['skipped']} skipped (not text)" if n["skipped"] else ""))
+            if c.problem:
+                print(f"    ! {c.problem}")
+        except OSError as e:
+            print(f"  Collection {c.name}: {e}")
     print("All set. Run `hark` to start.")
 
 
@@ -151,6 +204,13 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--model", help="model for document updates (default: sonnet; with --provider openai, the service's model name)")
     p.add_argument("--base-url", help="API address, for --provider openai (default https://api.openai.com/v1)")
     p.add_argument("--research-model", help="model for background research (default: same as --model)")
+    p.add_argument("--corpus", action="append", default=[], metavar="[NAME=]FOLDER",
+                   help="a folder of your own documents (a repo, project notes) Claude can search when asked; repeatable. "
+                        "Use --add-corpus to keep it for every run")
+    p.add_argument("--add-corpus", metavar="[NAME=]FOLDER|OWNER/REPO",
+                   help="save a folder, or a GitHub repo (hark clones it and keeps it up to date), as a searchable collection, then exit")
+    p.add_argument("--about", default="", help="with --add-corpus: a few words on what's in it, which helps Claude know when to search it")
+    p.add_argument("--remove-corpus", metavar="NAME", help="forget a saved collection, then exit")
     p.add_argument("--effort", default="low", help="Claude effort level (low/medium/high); low keeps updates quick")
     p.add_argument("--asr", default=os.environ.get("HARK_ASR", "parakeet"), choices=["parakeet", "moonshine"],
                    help="speech model: parakeet (accurate, multilingual) or moonshine (faster, English)")
@@ -180,6 +240,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.check:
         check(args)
+        return
+    if args.add_corpus or args.remove_corpus:
+        manage_corpora(args)
         return
     if args.new_key:
         token(new=True)
@@ -219,7 +282,9 @@ def main(argv: list[str] | None = None) -> None:
         print(f"\n  ! {scribe.problem}\n    Transcripts will work but the document won't update.\n", file=sys.stderr)
     args.data_dir.mkdir(parents=True, exist_ok=True)
     from .research import Researcher
-    hub = Hub(engine, scribe, args.data_dir, args.speaker_threshold, Researcher(scribe, cfg["research_model"]))
+    library = build_corpora(args)
+    corpora = list(library.current().values())
+    hub = Hub(engine, scribe, args.data_dir, args.speaker_threshold, Researcher(scribe, cfg["research_model"], corpora=library))
     hub.session.set_mode(args.mode)
     key = token()
     app = make_app(hub, key)
@@ -238,6 +303,11 @@ def main(argv: list[str] | None = None) -> None:
         print(f"\n  hark is running. Open:  {local}", flush=True)
         if scribe.available:
             print(f"  Documents are written by {scribe.model} via {scribe.backend.label}.", flush=True)
+        if corpora and hub.researcher.corpus_ok:
+            print(f"  Collections Claude can search: {', '.join(c.name for c in corpora)}", flush=True)
+            corpus_prep = asyncio.get_running_loop().create_task(prepare_corpora(corpora))  # noqa: F841 (kept so it isn't collected)
+        elif corpora:
+            print("  ! Collections need Claude (and a recent Claude Code) to be searched; they're off for now.", flush=True)
         if args.lan:
             ips = lan_ips()
             await web.TCPSite(runner, "0.0.0.0", args.port + 1, ssl_context=tls_context(ips)).start()

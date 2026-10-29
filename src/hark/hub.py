@@ -62,13 +62,15 @@ def research_findings(s: Session, jobs: int = 8) -> list[str]:
         quick = j.get("kind") == "quick" and j.get("answer") and not j.get("added")
         if not items and not quick:
             continue
-        lines = [f"[R{j['id']}] {clean(j.get('label') or j['q'], 120)}"]
-        if quick:
+        where = f" (from the {clean(j['corpus'], 60)} collection)" if j.get("corpus") else ""
+        lines = [f"[R{j['id']}] {clean(j.get('label') or j['q'], 120)}{where}"]
+        if quick or (j.get("kind") == "corpus" and j.get("answer")):
             lines.append(f"  Answer: {clip(clean(j['answer'], 4000), 1500)}")
         for i, it in items:
             url = clean_url(it.get("url"))
             note = clean(it.get("note"), 250)
-            lines.append(f"  {i}. {clean(it['title'], 250)}" + (f" ({url})" if url else "") + (f": {note}" if note else ""))
+            where = url or clean(it.get("path"), 200)
+            lines.append(f"  {i}. {clean(it['title'], 250)}" + (f" ({where})" if where else "") + (f": {note}" if note else ""))
         out.append("\n".join(lines))
     return out
 
@@ -90,6 +92,7 @@ class Hub:
         self.engine = engine
         self.scribe = scribe
         self.researcher = researcher or Researcher(scribe)
+        self._corpora_checked, self._corpora_seen = 0.0, None
         self.research_queue: list[tuple[Session, dict]] = []
         self.research_tasks: dict[tuple[str, int], asyncio.Task] = {}
         self.promote: list[tuple[Session, str]] = []  # research findings waiting to go into the document
@@ -136,7 +139,7 @@ class Hub:
         return {"type": "status", "listening": listening, "backlog": round(self.engine.backlog, 1),
                 "claude": self.claude, "editing": self.editing, "pending": len(s.lines) - s.processed,
                 "model": self.scribe.model, "asr": self.engine.asr_name, "researching": len(self.research_tasks),
-                "research_ok": self.researcher.available}
+                "research_ok": self.researcher.available, "corpora": self.researcher.collections()}
 
     async def push_status(self) -> None:
         await self.broadcast(self.status())
@@ -295,6 +298,7 @@ class Hub:
         while True:
             await asyncio.sleep(0.5)
             try:
+                await self._watch_corpora()
                 if self._prep_due():
                     await self._prepare()
                 elif self._due():
@@ -303,6 +307,25 @@ class Hub:
                     await self._tidy()
             except Exception:  # keep the loop alive whatever happens
                 log.exception("update failed")
+
+    async def _watch_corpora(self) -> None:
+        """Every few seconds, tell the page if collections were added or removed elsewhere (e.g. `hark --add-corpus`)."""
+        if time.time() - self._corpora_checked < 5:
+            return
+        self._corpora_checked = time.time()
+        names = [c["name"] for c in self.researcher.collections()]
+        if names != self._corpora_seen:
+            self._corpora_seen = names
+            await self.push_status()
+
+    def active_corpus(self, s: Session) -> str | None:
+        """The collection chosen for this session, if it still exists. Claude searches no other."""
+        return self.researcher.find(s.corpus) if s.corpus else None
+
+    def _collections_for(self, s: Session) -> list[dict]:
+        # Claude is only told about the session's own collection, so it can't pick another one.
+        active = self.active_corpus(s)
+        return [c for c in self.researcher.collections() if c["name"] == active]
 
     def _due(self) -> bool:
         s = self.session
@@ -345,7 +368,7 @@ class Hub:
         base = s.doc
         numbered = screen_sections(base, s.mode) if s.mode in ("outline", "notes") else None
         prompt = build_prompt(s.brief, base, s.speaker_notes(), earlier, new, typed, adds, requested, findings, s.done[-DONE_KEPT:],
-                              on_screen=s.stage, sections=numbered)
+                              on_screen=s.stage, sections=numbered, collections=self._collections_for(s))
         detail = f"{len(pending)} new line{'s' * (len(pending) != 1)}" if pending else ""
         if adds:
             detail = (detail + ", " if detail else "") + "adding research"
@@ -592,14 +615,22 @@ class Hub:
 
     async def _requested_research(self, s: Session, reqs: list, state: str | None = None, origin: str = "conversation") -> None:
         """Lookups the scribe heard someone ask for (or, with `state="proposed"`, ones it suggests)."""
-        known = {j["q"].strip().lower() for j in s.research}
+        known = {(j["q"].strip().lower(), j.get("corpus")) for j in s.research}
         for r in reqs[:3]:
-            q = str((r or {}).get("question") or "").strip()
-            if not q or q.lower() in known:
+            if not isinstance(r, dict):
                 continue
-            known.add(q.lower())
+            q = str(r.get("question") or "").strip()
             kind = r.get("kind") if r.get("kind") in KINDS else guess_kind(q)
-            job = s.add_research(q, origin, state or ("queued" if s.research_auto else "proposed"), str(r.get("label") or ""), kind)
+            # Whatever collection was named, only the session's own one is ever searched.
+            corpus = self.active_corpus(s) if kind == "corpus" else None
+            if kind == "corpus" and not corpus:
+                await self.broadcast({"type": "toast", "text": "Claude heard a request to search your documents, but this session has "
+                                                               "no collection chosen. Pick one next to Look something up."})
+                continue
+            if not q or (q.lower(), corpus) in known:
+                continue
+            known.add((q.lower(), corpus))
+            job = s.add_research(q, origin, state or ("queued" if s.research_auto else "proposed"), str(r.get("label") or ""), kind, corpus)
             if job["state"] == "queued":
                 self.research_queue.append((s, job))
             await self.push_research(s, job)
@@ -621,7 +652,7 @@ class Hub:
         job.update(state="running", started=time.time(), error="")
         await self.push_research(s, job)
         try:
-            result, took = await self.researcher.run(job["q"], s.title, job.get("kind", "sources"))
+            result, took = await self.researcher.run(job["q"], s.title, job.get("kind", "sources"), job.get("corpus"))
             job.update(result, state="done", took=round(took))
         except asyncio.CancelledError:
             job.update(state="cancelled")
@@ -645,10 +676,16 @@ class Hub:
         if kind == "research_ask":
             q = (msg.get("q") or "").strip()
             if q:
-                job = s.add_research(q, "typed", "queued", kind=guess_kind(q))
+                corpus = self.active_corpus(s)
+                job = s.add_research(q, "typed", "queued", kind="corpus" if corpus else guess_kind(q), corpus=corpus)
                 await self.push_research(s, job)
                 self._queue_research(s, job)
                 s.save()
+            return
+        if kind == "research_corpus":
+            s.corpus = self.researcher.find(msg.get("name"))
+            s.save()
+            await self.push_state()
             return
         if kind == "research_auto":
             s.research_auto = bool(msg.get("on"))
@@ -697,12 +734,42 @@ class Hub:
                 lines.append("(A quick explanation: add it as a short point, with the source link if there is one.)")
             for it in picks:
                 it["added"] = True
-                title = f"[{it['title']}]({it['url']})" if it.get("url") else it["title"]
+                title = f"[{it['title']}]({it['url']})" if it.get("url") else it["title"] + (f" ({it['path']})" if it.get("path") else "")
                 lines.append(f"- {title}" + (f": {it['note']}" if it.get("note") else ""))
             self.promote.append((s, "\n".join(lines)))
             self.force = True
             await self.push_research(s, job)
         s.save()
+
+    # -- collections ----------------------------------------------------------
+    async def _corpus_msg(self, ws, kind: str, msg: dict) -> None:
+        """Add a GitHub repo, update a collection now, or forget one. Folders on this computer can only be
+        added from the command line, so a page (or a leaked link) can't point Claude at any folder it likes."""
+        from . import config
+
+        say = lambda text: self.send(ws, {"type": "toast", "text": text})
+        name = str(msg.get("name") or "")
+        try:
+            if kind == "corpus_add":
+                spec = str(msg.get("spec") or "").strip()
+                if not spec:
+                    return
+                await say(f"Fetching {spec} from GitHub…")
+                c = await asyncio.to_thread(config.add_corpus, spec, str(msg.get("about") or "")[:300], False)
+                corpus = self.researcher.corpora.get(c["name"])
+                n = await asyncio.to_thread(corpus.sync) if corpus else {"files": 0}
+                await say(f"Added {c['name']}: {n['files']} files Claude can search.")
+            elif kind == "corpus_update":
+                corpus = self.researcher.corpora.get(name)
+                if corpus:
+                    n = await asyncio.to_thread(corpus.sync, True)
+                    await say(f"{name} is up to date: {n['files']} files" + (f". {corpus.problem}" if corpus.problem else "."))
+            elif kind == "corpus_remove":
+                if await asyncio.to_thread(config.remove_corpus, name):
+                    await say(f"Forgot {name}.")
+        except (OSError, ValueError) as e:
+            await say(str(e)[:300])
+        await self.push_status()
 
     # -- messages from the page --------------------------------------------
     async def handle(self, ws, msg: dict) -> None:
@@ -756,6 +823,8 @@ class Hub:
                 await self.send(ws, {"type": "toast", "text": "Claude will tidy up as soon as this update is done."})
         elif isinstance(kind, str) and kind.startswith("research_"):
             await self._research_msg(kind, msg)
+        elif isinstance(kind, str) and kind.startswith("corpus_"):
+            await self._corpus_msg(ws, kind, msg)
         elif kind == "rename":
             was = s.speakers.name(msg.get("id", ""))
             sid = s.speakers.rename(msg.get("id", ""), msg.get("name", ""))

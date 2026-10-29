@@ -107,6 +107,28 @@ The panel beside the document (the **Research** tab; on a phone, the **Research*
 
 A lookup for sources uses noticeably more of your plan than a document update: roughly as much as 5 to 10 updates. A quick look-up should use less, as it searches less.
 
+### Your own documents
+
+Claude can also answer from documents of your own: a project's GitHub repo, transcripts of earlier meetings, a folder of notes. Save each one once as a **collection**:
+
+```sh
+hark --add-corpus mikefsway/societal-immunity --about "transcripts, reading list and notes from the project"
+hark --add-corpus ~/Documents/project-notes
+```
+
+- **A GitHub repo** (`owner/repo` or its github.com link): hark makes its own copy, holding only the latest version. Before a search it fetches any changes from GitHub, if it hasn't checked in the last five minutes, so whatever anyone pushed is included. Private repos work if this computer is signed in to GitHub (`gh auth login`). If GitHub can't be reached, hark searches the copy it has and says so under **More → Collections**.
+- **A folder on this computer** is read as it is, so your edits are always included. hark never runs `git pull` in a folder you work in; add the repo by name instead if you want that.
+- From the app, **More → Collections** lists your collections with when each was last read, and lets you **Update now**, **Remove** one, or add a GitHub repo, which is handy from a phone. Folders can only be added from the command line, so someone with your link can't point Claude at other folders on your computer.
+- A running hark notices added and removed collections within a few seconds, without a restart.
+- The name is the folder or repo name, or give one with `NAME=FOLDER`. `--about` is optional; it helps Claude tell when a question is about these documents. To use a folder for one run only, start hark with `--corpus FOLDER` (repeatable). `hark --remove-corpus NAME` forgets a collection and deletes hark's copies of it, never your own folder.
+
+- **Choose the collection for the session** in the picker next to **Look something up** (it appears once you have a collection). It's saved with the session, and it's the only collection Claude can search in it, whether you type or speak. Claude isn't told the others exist, so a question can't pull in details from an unrelated repo and put them on a shared screen. With **Web** chosen, no collection is searched.
+- **Ask out loud** and point at your documents: "Claude, what did we decide about the outline in the last catch-up?" or "Claude, check the project notes for which papers we marked as core". A question about the wider world ("Claude, what's the levee effect?") still goes to the web. Typed requests go to the chosen collection.
+- You get a short answer drawn only from the documents (or a plain "they don't cover this") and the files it used. If the folder is a GitHub repo, each file links to it there. **Add** works as for any other finding, and the answer pops up on the room screen like a quick look-up.
+- hark keeps a plain-text copy of each collection in `~/.cache/hark/corpora` (and its GitHub copies in `~/.local/share/hark/repos`). Text and code files are copied as they are; Word (`.docx`), PowerPoint (`.pptx`, with speaker notes) and PDF files are converted to text (PDFs need `pdftotext`, from poppler-utils). Other files are skipped. In a git repo, files your `.gitignore` excludes are left out. The copy is brought up to date before each search, which only re-reads files that changed.
+- Each search is a separate Claude call that can only list, search and read that copy. It has no web access and no other tools, and with your Claude subscription Claude Code's `--restricted` mode keeps it inside the copy. As with web research, only your question and the document's title go with it, not the conversation.
+- A search usually takes 5–15 seconds. Collections need Claude (your subscription, with a recent Claude Code, or an Anthropic API key).
+
 ## On a shared screen
 
 When hark is on a TV or projector in the room, or shared into a Teams call, show the **room screen** instead of the document. It's read-only and in large type, and it shows only what the group is on right now:
@@ -174,6 +196,7 @@ To send the document to someone, use **More → Share…**, which opens your pho
 | `--model sonnet` | Model for updates. With Claude, `haiku` is lighter on usage and `opus` is the most careful. With an OpenAI-compatible service, use the name it lists. |
 | `--base-url URL` | The API address, for `--provider openai`. |
 | `--research-model opus` | Claude model for research lookups. The default is the same as `--model`. |
+| `--corpus [NAME=]FOLDER` | Let Claude search a folder of your own documents for this run (see [Your own documents](#your-own-documents)). `--add-corpus FOLDER\|OWNER/REPO` saves a folder or GitHub repo for every run, `--remove-corpus NAME` forgets it. |
 | `--asr parakeet\|moonshine` | Speech model. Parakeet (default) is accurate, adds punctuation and handles 25 European languages. Moonshine is English-only, smaller and faster, for older laptops. |
 | `--lan` | Also serve over HTTPS on your network, for your phone. |
 | `--replay file.m4a` | Feed a recording through as if it were live. Useful for old recordings or for trying hark out. Needs ffmpeg for formats other than WAV. |
@@ -207,7 +230,7 @@ hark never sees your Claude login. It runs your own copy of Claude Code, unchang
 
 ## Privacy
 
-Audio stays on your machine: voice detection, transcription and speaker matching all run locally. Transcript text and the document go to the AI service you chose: Anthropic for your Claude subscription or an Anthropic key, or the provider you set up otherwise. With a local model (Ollama, LM Studio), nothing leaves your machine except research lookups, which aren't available there anyway.
+Audio stays on your machine: voice detection, transcription and speaker matching all run locally. Transcript text and the document go to the AI service you chose: Anthropic for your Claude subscription or an Anthropic key, or the provider you set up otherwise. With a local model (Ollama, LM Studio), nothing leaves your machine except research lookups, which aren't available there anyway. When you search a collection, the passages Claude reads from it go to Anthropic too, so think before adding a folder of sensitive documents.
 
 **Tell people before you start, and get their agreement.** Recording or transcribing a conversation without consent is against the law in some places and against many organisations' policies, and the transcript and document are personal data. Sessions are saved as plain files in `~/Documents/Hark/`, so delete the ones you don't need.
 

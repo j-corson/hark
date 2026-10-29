@@ -65,7 +65,7 @@
       const j = m.job;
       st.research.set(j.id, j);
       const key = `${st.sid}:${j.id}`;
-      if (j.kind === "quick" && j.state === "done" && j.answer && !st.popped.has(key)) { st.popped.add(key); showLookup(j); }
+      if (onScreen(j) && j.state === "done" && j.answer && !st.popped.has(key)) { st.popped.add(key); showLookup(j); }
       renderLooking();
     } else if (m.type === "research_removed") {
       st.research.delete(m.id);
@@ -390,23 +390,28 @@
   // ---------------------------------------------------------------- quick look-ups
   // A quick answer pops up over the notes for long enough to read it aloud, then goes.
   // Requests for sources stay in the Research panel: a reading list doesn't read across a room.
+  // Answers from the group's own documents are short, so they pop up too.
+  const onScreen = (j) => j.kind === "quick" || j.kind === "corpus";
   function renderLooking() {
-    const busy = [...st.research.values()].filter((j) => j.kind === "quick" && (j.state === "queued" || j.state === "running"));
+    const busy = [...st.research.values()].filter((j) => onScreen(j) && (j.state === "queued" || j.state === "running"));
     const el = $("looking");
     el.hidden = !busy.length;
-    if (busy.length) el.textContent = `Looking up: ${busy[busy.length - 1].label || busy[busy.length - 1].q}`;
+    const j = busy[busy.length - 1];
+    if (j) el.textContent = `${j.kind === "corpus" ? `Searching ${j.corpus}` : "Looking up"}: ${j.label || j.q}`;
   }
   let lookupTimer;
   function showLookup(j) {
     const it = j.items && j.items[0];
     let host = "";
     try { host = it && it.url ? new URL(it.url).hostname.replace(/^www\./, "") : ""; } catch (_) { /* not a URL */ }
-    const src = it ? `Source: ${esc(it.title)}${host ? ` <span class="host">${esc(host)}</span>` : ""}`
+    const corpus = j.kind === "corpus";
+    const src = corpus ? (j.items.length ? `From: ${j.items.slice(0, 3).map((i) => esc(i.title)).join("; ")}` : `Nothing found in ${esc(j.corpus)}`)
+      : it ? `Source: ${esc(it.title)}${host ? ` <span class="host">${esc(host)}</span>` : ""}`
       : "From Claude's own knowledge, not checked against a source";
     const el = $("lookup");
     const answer = clip(j.answer, 700);
     const more = answer !== j.answer ? '<span class="more"> The full answer is in the Research panel.</span>' : "";
-    el.innerHTML = `<p class="kicker">Quick look-up</p><h2>${esc(j.label || j.q)}</h2><p class="answer">${esc(answer)}${more}</p><p class="src">${src}</p>`;
+    el.innerHTML = `<p class="kicker">${corpus ? `From ${esc(j.corpus)}` : "Quick look-up"}</p><h2>${esc(j.label || j.q)}</h2><p class="answer">${esc(answer)}${more}</p><p class="src">${src}</p>`;
     el.hidden = false;
     // A long answer gets smaller type rather than being cut off.
     let s = 1;

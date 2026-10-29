@@ -38,6 +38,7 @@
       <button type="button" data-act="download">Download .md</button>
       <button type="button" data-act="agenda">Start from an agenda…</button>
       <button type="button" data-act="brief">Instructions for Claude…</button>
+      <button type="button" data-act="corpora">Collections…</button>
       <button type="button" data-act="sessions">Open a previous session…</button>
       <button type="button" data-act="new">New session</button>
     </div>
@@ -64,6 +65,7 @@
     </div>
     <div class="tabpane" id="researchPane" role="tabpanel" aria-labelledby="tabResearch">
       <form id="askForm" class="ask">
+        <select id="askWhere" aria-label="Search in" title="Search in" hidden></select>
         <input id="askInput" autocomplete="off" placeholder="Look something up…" aria-label="Research request">
         <button type="submit" class="quiet">Ask</button>
       </form>
@@ -114,6 +116,22 @@
     <textarea id="agendaText" rows="12" placeholder="# Research backlog ideas&#10;- Ofgem consultation responses: how supplier views on flexibility changed&#10;  - every response since 2010?&#10;- Half-hourly smart meter data for 1,000 homes"></textarea>
     <label class="inline file">Or load a file <input type="file" id="agendaFile" accept=".md,.markdown,.txt,text/plain,text/markdown"></label>
     <div class="row"><button value="cancel" class="quiet">Cancel</button><button value="ok" class="primary">Start</button></div>
+  </form>
+</dialog>
+
+<dialog id="corpDlg">
+  <form method="dialog" class="dlg" id="corpForm">
+    <h2>Collections</h2>
+    <p class="hint">Documents Claude can search when you ask, for example “Claude, what did we decide in the last catch-up?” GitHub repos are fetched again before a search if they haven't been checked for five minutes. Folders on your own computer are read as they are, and can be added with <code>hark --add-corpus FOLDER</code>.</p>
+    <ul id="corpList" class="corplist"></ul>
+    <p class="hint" id="corpNone">No collections yet.</p>
+    <label class="inline">Add a GitHub repo
+      <input id="corpSpec" autocomplete="off" spellcheck="false" placeholder="owner/repo or its github.com link">
+    </label>
+    <label class="inline">What's in it (optional, helps Claude know when to search it)
+      <input id="corpAbout" autocomplete="off" placeholder="e.g. transcripts and notes from the project">
+    </label>
+    <div class="row"><button value="cancel" class="quiet">Close</button><button type="button" class="primary" id="corpAdd">Add</button></div>
   </form>
 </dialog>
 

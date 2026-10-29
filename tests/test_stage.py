@@ -54,7 +54,7 @@ class Sent:
 
 def make_hub(tmp_path):
     hub = Hub(SimpleNamespace(backlog=0.0, asr_name="x"), SimpleNamespace(available=True, model="fake"), tmp_path,
-              researcher=SimpleNamespace(available=False))
+              researcher=SimpleNamespace(available=False, collections=lambda: [], find=lambda n: None))
     hub.session.mode = "outline"
     hub.session.set_doc(DOC, by="claude")
     ws = Sent()
