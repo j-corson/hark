@@ -69,7 +69,7 @@ class FakeScribe:
 
 
 def make_hub(tmp_path, scribe):
-    return Hub(SimpleNamespace(backlog=0.0, asr_name="x"), scribe, tmp_path, researcher=SimpleNamespace(available=False))
+    return Hub(SimpleNamespace(backlog=0.0, asr_name="x"), scribe, tmp_path, researcher=SimpleNamespace(available=False, collections=lambda: [], find=lambda n: None))
 
 
 PREPARED = """# Research backlog ideas

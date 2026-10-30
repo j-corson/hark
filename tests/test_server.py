@@ -29,3 +29,26 @@ def test_other_sites_refused():
     assert not same_origin(req("http://localhost:3000"))
     assert not same_origin(req("https://evil.example"))
     assert not same_origin(req("null"))
+
+
+def test_room_screen_needs_the_key():
+    import asyncio
+
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from hark.server import make_app
+
+    class Hub:
+        async def updater(self):
+            pass
+
+        def spawn(self, coro):
+            coro.close()
+
+    async def run():
+        async with TestClient(TestServer(make_app(Hub(), "secret"))) as c:
+            assert (await c.get("/present")).status == 403
+            r = await c.get("/present?k=secret")
+            assert r.status == 200 and "present.js" in await r.text()
+
+    asyncio.run(run())

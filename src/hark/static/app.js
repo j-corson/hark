@@ -10,6 +10,9 @@
     modes: {}, fresh: new Map(), editing: null, rawOpen: false, pendingRender: false,
     caps: {}, ctx: null, workletReady: null, wake: null, lastUserScroll: 0,
     research: [], unseen: new Set(), tab: "research", view: "doc", notesOpen: false,
+    slides: { available: false, canLink: false, deck: null }, // a linked PowerPoint deck, on Windows
+    stage: null, // heading held on the room screen; Claude puts new points there
+    sections: [], // the room screen's sections, in order; in co-writing and notes their numbers show beside the headings
   };
   const narrow = window.matchMedia("(max-width: 820px)");
 
@@ -34,12 +37,16 @@
   function onMessage(m) {
     if (m.type === "state") {
       st.session = m.session; st.sessions = m.sessions;
-      st.doc = m.session.doc; st.version = m.session.version;
+      st.doc = m.session.doc; st.version = m.session.version; st.stage = m.stage || null;
+      st.sections = m.sections || [];
       st.lines = m.session.lines; st.speakers = m.session.speakers;
       $("modeSel").value = m.session.mode;
       $("undoBtn").disabled = !m.session.can_undo;
       st.research = m.session.research || []; st.unseen.clear();
       $("autoRes").checked = !!m.session.research_auto;
+      st.slides = { available: !!m.slides_available, canLink: !!m.can_link, deck: m.session.deck || null };
+      renderSlides();
+      setPicker(); renderClock();
       renderDoc(); renderTranscript(); renderSpeakers(); renderTitle(m.session.title); renderResearch();
     } else if (m.type === "research") {
       const i = st.research.findIndex((j) => j.id === m.job.id);
@@ -47,6 +54,7 @@
       if (i >= 0) st.research[i] = m.job; else st.research.push(m.job);
       if (m.job.state === "done" && (!prev || prev.state !== "done") && !researchVisible()) st.unseen.add(m.job.id);
       if (!prev && m.job.origin === "conversation" && !researchVisible()) st.unseen.add(m.job.id);
+      if (!prev && m.job.kind === "meeting" && m.job.answer) toast(`${m.job.label}: ${m.job.answer}`, 15000);
       renderResearch();
     } else if (m.type === "research_removed") {
       st.research = st.research.filter((j) => j.id !== m.id); st.unseen.delete(m.id);
@@ -57,16 +65,22 @@
         for (const i of m.changed) if (ls[i] && ls[i].trim()) st.fresh.set(ls[i].trim(), now);
       }
       st.doc = m.doc; st.version = m.version;
+      if ("stage" in m) st.stage = m.stage || null;
+      if (m.sections) st.sections = m.sections;
       $("undoBtn").disabled = !m.can_undo;
       renderTitle(m.title);
       renderDoc(m.by === "claude");
+    } else if (m.type === "stage") {
+      st.stage = m.heading || null;
+      renderDoc(false);
     } else if (m.type === "line") {
       st.speakers = m.speakers;
       st.lines.push(m.line);
       appendLine(m.line);
       renderSpeakers();
     } else if (m.type === "status") {
-      st.status = m; renderStatus(); markPending();
+      st.status = m; renderStatus(); markPending(); renderCorpora(m.corpora || []);
+      if ($("corpDlg").open) renderCorpList();
     } else if (m.type === "toast") {
       toast(m.text);
     }
@@ -107,6 +121,15 @@
       const node = tmp.firstElementChild;
       node.dataset.start = b.start; node.dataset.end = b.end;
       if (inNotes) node.classList.add("wn");
+      const num = b.kind === "h" && st.session && ["outline", "notes"].includes(st.session.mode) ? st.sections.indexOf(lines[b.start].trim()) : -1;
+      if (num >= 0) node.dataset.num = num + 1;
+      if (b.kind === "h" && st.stage && lines[b.start].trim() === st.stage) {
+        node.classList.add("onstage");
+        const tag = document.createElement("button");
+        tag.type = "button"; tag.className = "quiet stagetag"; tag.textContent = "On screen ✕";
+        tag.title = "The room screen is held on this section, and Claude puts new points here. Click to let it follow the conversation again.";
+        node.appendChild(tag);
+      }
       if (idx === wn && wnEnd > wn + 1) {
         const n = bl.slice(wn + 1, wnEnd).filter((x) => x.kind === "li").length;
         const tg = document.createElement("button");
@@ -148,6 +171,7 @@
   $("doc").addEventListener("click", (e) => {
     if (e.target.closest("a")) return;
     if (e.target.closest(".wntoggle")) { st.notesOpen = !st.notesOpen; renderDoc(false); return; }
+    if (e.target.closest(".stagetag")) { send({ type: "stage", heading: null }); return; }
     const box = e.target.closest("input[type=checkbox]");
     const blk = e.target.closest("[data-start]");
     if (!blk || st.editing) return;
@@ -445,14 +469,18 @@
     if (!b) return;
     hidePopovers();
     const act = b.dataset.act;
-    if (act === "edit") openRaw();
+    if (act === "present") window.open("/present", "hark-present", "popup,width=1280,height=720");
+    else if (act === "slide") send({ type: "slides_this" });
+    else if (act === "link") { send({ type: "slides_link" }); toast("Choose the deck in the window that opens."); }
+    else if (act === "edit") openRaw();
     else if (act === "update") { send({ type: "update_now" }); toast("Asked Claude to update now."); }
     else if (act === "copy") {
-      try { await navigator.clipboard.writeText(st.doc); toast("Copied the document as Markdown."); }
+      const text = withResearch(st.doc);
+      try { await navigator.clipboard.writeText(text); toast(text === st.doc ? "Copied the document as Markdown." : "Copied the document as Markdown, with the research at the end."); }
       catch (_) { toast("This browser won't allow copying here. Use Download .md instead."); }
     } else if (act === "download") {
       const a = document.createElement("a");
-      a.href = URL.createObjectURL(new Blob([st.doc], { type: "text/markdown" }));
+      a.href = URL.createObjectURL(new Blob([withResearch(st.doc)], { type: "text/markdown" }));
       a.download = fileName(".md");
       a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     } else if (act === "share") {
@@ -467,7 +495,13 @@
       const mode = st.session && st.session.mode;
       $("agendaMode").value = mode === "grill" ? "grill" : "meeting";
       $("agendaFile").value = "";
+      $("agendaEnds").value = st.session && st.session.ends ? hhmm(st.session.ends) : "";
+      $("agendaNudge").checked = !!(st.session && st.session.nudge);
       $("agendaDlg").showModal();
+    } else if (act === "timing") {
+      openTiming();
+    } else if (act === "corpora") {
+      renderCorpList(); $("corpDlg").showModal();
     } else if (act === "sessions") {
       renderSessions(); $("sessDlg").showModal();
     } else if (act === "new") {
@@ -483,11 +517,39 @@
   $("agendaDlg").addEventListener("close", () => {
     if ($("agendaDlg").returnValue !== "ok") return;
     const text = $("agendaText").value.trim();
-    if (!text) { toast("The agenda was empty, so nothing changed."); return; }
-    send({ type: "agenda", text, mode: $("agendaMode").value });
+    const aims = $("agendaAims").value.split("\n").map((a) => a.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "").trim()).filter(Boolean);
+    if (!text && !aims.length) { toast("The agenda was empty, so nothing changed."); return; }
+    send({ type: "agenda", text, mode: $("agendaMode").value, aims, ends: $("agendaEnds").value, nudge: $("agendaNudge").checked });
     st.fresh.clear();
-    $("agendaText").value = "";
+    $("agendaText").value = ""; $("agendaAims").value = "";
   });
+
+  // ---------------------------------------------------------------- meeting time
+  const hhmm = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  function openTiming() {
+    const s = st.session || {};
+    $("timeEnds").value = s.ends ? hhmm(s.ends) : "";
+    $("timeNudge").checked = !!s.nudge;
+    $("timeDlg").showModal();
+  }
+  $("timeDlg").addEventListener("close", () => {
+    const v = $("timeDlg").returnValue;
+    if (v === "ok") send({ type: "timing", ends: $("timeEnds").value, nudge: $("timeNudge").checked });
+    else if (v === "clear") send({ type: "timing", ends: "", nudge: false });
+  });
+  $("clock").onclick = openTiming;
+  // "Ends 11:30 · 14 min left", in the bar.
+  const span = (n) => (n < 90 ? `${n} min` : `${Math.floor(n / 60)} h${n % 60 ? ` ${n % 60} min` : ""}`);
+  function renderClock() {
+    const el = $("clock"), ends = st.session && st.session.ends;
+    el.hidden = !ends;
+    if (!ends) return;
+    const left = Math.round((ends - Date.now() / 1000) / 60);
+    el.textContent = left >= 0 ? `Ends ${hhmm(ends)} · ${span(left)} left` : `Due to end ${hhmm(ends)} · ${span(-left)} over`;
+    el.classList.toggle("soon", left >= 0 && left <= 10);
+    el.classList.toggle("over", left < 0);
+  }
+  setInterval(renderClock, 15000);
   $("briefDlg").addEventListener("close", () => {
     if ($("briefDlg").returnValue === "ok") send({ type: "set_brief", brief: $("briefText").value, interval: +$("intervalIn").value });
   });
@@ -501,9 +563,28 @@
   }
   // Android Chrome won't share .md files, so fall back to .txt there.
   function shareFile() {
-    const md = new File([st.doc], fileName(".md"), { type: "text/markdown" });
+    const text = withResearch(st.doc);
+    const md = new File([text], fileName(".md"), { type: "text/markdown" });
     if (navigator.canShare && navigator.canShare({ files: [md] })) return md;
-    return new File([st.doc], fileName(".txt"), { type: "text/plain" });
+    return new File([text], fileName(".txt"), { type: "text/plain" });
+  }
+  // Exports carry this session's look-ups after the notes, so they aren't lost with the panel.
+  function withResearch(doc) {
+    const done = st.research.filter((j) => j.state === "done" && (j.answer || j.items.length));
+    if (!done.length) return doc;
+    const one = (s) => String(s || "").replace(/\s+/g, " ").trim();
+    let out = doc.replace(/\s+$/, "") + "\n\n---\n\n## Research\n";
+    for (const j of done) {
+      out += `\n### ${one(j.label || j.q)}\n\n`;
+      if (j.answer) out += one(j.answer) + "\n\n";
+      for (const it of j.items) {
+        const u = safeUrl(it.url);
+        const name = u ? `[${one(it.title)}](${u})` : one(it.title) + (it.path ? ` (\`${one(it.path)}\`)` : "");
+        out += `- ${name}${it.note ? `: ${one(it.note)}` : ""}\n`;
+      }
+      if (j.kind === "quick" && !j.items.length) out += "_From Claude's own knowledge, without a source._\n";
+    }
+    return out;
   }
   async function share(data) {
     try { await navigator.share(data); }
@@ -576,10 +657,12 @@
   const ORIGIN = { conversation: "Picked up by Claude", typed: "Typed here" };
   function researchMeta(j) {
     const when = fmtTime(j.created);
-    const how = `${ORIGIN[j.origin] || ""} · ${when}`;
+    if (j.kind === "meeting") return `${j.origin === "reminder" ? "Time reminder" : "Claude's answer, from the notes and discussion"} · ${when}`;
+    const kind = j.kind === "corpus" ? `In ${j.corpus} · ` : ({ quick: "Quick look-up · ", sources: "Sources · " }[j.kind] || "");
+    const how = `${kind}${ORIGIN[j.origin] || ""} · ${when}`;
     if (j.state === "proposed") return `${how} · Not started`;
     if (j.state === "queued") return `${how} · Waiting for a free slot`;
-    if (j.state === "running") return `Researching… ${Math.max(0, Math.round(Date.now() / 1000 - (j.started || j.created)))}s`;
+    if (j.state === "running") return `${j.kind === "corpus" ? `Searching ${j.corpus}` : "Researching"}… ${Math.max(0, Math.round(Date.now() / 1000 - (j.started || j.created)))}s`;
     if (j.state === "done") return `${how} · Found in ${j.took || 0}s`;
     if (j.state === "cancelled") return `${how} · Cancelled`;
     return `Couldn't finish: ${j.error || "unknown error"}`;
@@ -587,16 +670,25 @@
   const safeUrl = (u) => (/^https?:\/\//i.test(u || "") ? u : "");
   function researchCard(j) {
     const li = document.createElement("li");
-    li.className = `rcard ${j.state}` + (st.unseen.has(j.id) ? " unseen" : "");
+    li.className = `rcard ${j.state} k-${j.kind}` + (st.unseen.has(j.id) ? " unseen" : "");
     li.dataset.id = j.id;
     let h = `<div class="rq" title="${esc(j.q)}">${esc(j.label || j.q)}</div><div class="rmeta">${esc(researchMeta(j))}</div>`;
-    if (j.state === "done") {
+    const quick = j.kind === "quick";
+    if (j.kind === "meeting") {
+      if (j.answer) h += `<p class="ranswer quick">${esc(j.answer)}</p>`;
+    } else if (j.state === "done" && quick) {
+      if (j.answer) h += `<p class="ranswer quick">${esc(j.answer)}</p>`;
+      const it = j.items[0], u = it && safeUrl(it.url);
+      h += it ? `<p class="rsource">Source: ${u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(it.title)}</a>` : esc(it.title)}</p>`
+        : '<p class="rsource">From Claude\'s own knowledge, not checked against a source.</p>';
+    } else if (j.state === "done") {
       if (j.answer) h += `<p class="ranswer">${esc(j.answer)}</p>`;
       if (j.items.length) {
         h += '<ul class="ritems">';
         j.items.forEach((it, i) => {
           const u = safeUrl(it.url);
-          const t = u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(it.title)}</a>` : esc(it.title);
+          const t = (u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(it.title)}</a>` : esc(it.title)) +
+            (it.path ? `<span class="p">${esc(it.path)}</span>` : "");
           h += `<li class="${it.added ? "added" : ""}"><span class="t">${t}</span>` +
             `<button type="button" class="quiet" data-ract="add" data-i="${i}" ${it.added ? "disabled" : ""}>${it.added ? "Added" : "Add"}</button>` +
             (it.note ? `<span class="n">${esc(it.note)}</span>` : "") + "</li>";
@@ -604,10 +696,21 @@
         h += "</ul>";
       }
     }
+    const slidable = j.state === "done" && st.slides.available && st.slides.deck;
+    if (slidable) {
+      if (j.slide) h += '<p class="rslide">added to slides</p>';
+      else if (j.slides_note) h += `<p class="rslide note">${esc(j.slides_note)}</p>`;
+    }
     const acts = [];
-    if (j.state === "proposed") acts.push(["run", "Research this", true], ["dismiss", "Dismiss"]);
+    if (slidable) acts.push(["slide", j.slide ? "Add again" : "Add to slides"]);
+    if (j.kind === "meeting") acts.push(["dismiss", "Dismiss"]);
+    else if (j.state === "proposed") acts.push(["run", "Research this", true], ["dismiss", "Dismiss"]);
     else if (j.state === "queued" || j.state === "running") acts.push(["cancel", "Cancel"]);
-    else if (j.state === "done") {
+    else if (j.state === "done" && quick) {
+      if (j.answer && !j.added) acts.push(["addall", "Add to document", true]);
+      if (!j.deeper) acts.push(["sources", "Find sources"]);
+      acts.push(["dismiss", "Dismiss"]);
+    } else if (j.state === "done") {
       if (j.items.some((it) => !it.added)) acts.push(["addall", "Add all to document", true]);
       acts.push(["dismiss", "Dismiss"]);
     } else acts.push(["run", "Try again"], ["dismiss", "Dismiss"]);
@@ -634,23 +737,102 @@
     if (!b) return;
     const id = +b.closest(".rcard").dataset.id, a = b.dataset.ract;
     if (a === "add") { send({ type: "research_add", id, items: [+b.dataset.i] }); toast("Claude is adding that to the document."); }
-    else if (a === "addall") { send({ type: "research_add", id, items: null }); toast("Claude is adding these to the document."); }
+    else if (a === "addall") {
+      const j = st.research.find((x) => x.id === id);
+      send({ type: "research_add", id, items: null });
+      toast(j && j.kind === "quick" ? "Claude is adding that to the document." : "Claude is adding these to the document.");
+    } else if (a === "sources") { send({ type: "research_sources", id }); toast("Looking for sources on that."); }
+    else if (a === "slide") send({ type: "slides_add", id });
     else send({ type: `research_${a}`, id });
   });
   $("askForm").onsubmit = (e) => {
     e.preventDefault();
     const v = $("askInput").value.trim();
     if (!v) return;
+    const where = $("askWhere").value;
     send({ type: "research_ask", q: v });
     $("askInput").value = "";
   };
+  // Where a typed request goes: the web, or one of the user's own collections.
+  let corporaKey = null;
+  function renderCorpora(list) {
+    const key = list.map((c) => c.name).join("\n");
+    if (key === corporaKey) return;
+    corporaKey = key;
+    const sel = $("askWhere");
+    sel.innerHTML = '<option value="">Web</option>' + list.map((c) =>
+      `<option value="${esc(c.name)}" title="${esc(c.about || "")}">${esc(c.name)}</option>`).join("");
+    sel.hidden = !list.length;
+    setPicker();
+  }
+  // The picker is the session's setting: the one collection Claude may search, typed or spoken.
+  function setPicker() {
+    const sel = $("askWhere"), want = (st.session && st.session.corpus) || "";
+    sel.value = [...sel.options].some((o) => o.value === want) ? want : "";
+    askHint();
+  }
+  function askHint() {
+    const where = $("askWhere").value;
+    $("askInput").placeholder = where ? "Ask these documents…" : "Look something up…";
+  }
+  // ☰ → Collections: add a GitHub repo, update or forget one.
+  function renderCorpList() {
+    const list = (st.status && st.status.corpora) || [];
+    const ul = $("corpList");
+    ul.innerHTML = list.map((c) => {
+      const when = c.updated ? `updated ${fmtTime(c.updated)}` : "not read yet";
+      const what = `${c.repo ? `GitHub: ${esc(c.repo)}` : esc(c.where)} · ${c.files} files · ${when}`;
+      return `<li data-name="${esc(c.name)}"><span class="n">${esc(c.name)}</span>` +
+        `<span class="b"><button type="button" class="quiet" data-cact="update">Update now</button>` +
+        (c.saved ? '<button type="button" class="quiet" data-cact="remove">Remove</button>' : "") + "</span>" +
+        `<span class="m">${what}</span>` + (c.about ? `<span class="m">${esc(c.about)}</span>` : "") +
+        (c.problem ? `<span class="m bad">${esc(c.problem)}</span>` : "") + "</li>";
+    }).join("");
+    $("corpNone").hidden = list.length > 0;
+  }
+  $("corpList").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-cact]");
+    if (!b) return;
+    const name = b.closest("li").dataset.name;
+    if (b.dataset.cact === "remove" && !confirm(`Forget ${name}? Your own files aren't touched.`)) return;
+    send({ type: `corpus_${b.dataset.cact}`, name });
+    if (b.dataset.cact === "update") toast(`Updating ${name}…`);
+  });
+  $("corpAdd").onclick = () => {
+    const spec = $("corpSpec").value.trim();
+    if (!spec) { $("corpSpec").focus(); return; }
+    send({ type: "corpus_add", spec, about: $("corpAbout").value.trim() });
+    $("corpSpec").value = ""; $("corpAbout").value = "";
+  };
+  for (const id of ["corpSpec", "corpAbout"]) {
+    $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("corpAdd").click(); } });
+  }
+  $("askWhere").onchange = () => {
+    send({ type: "research_corpus", name: $("askWhere").value });
+    askHint();
+  };
   $("autoRes").onchange = () => send({ type: "research_auto", on: $("autoRes").checked });
 
+  // ---------------------------------------------------------------- slides (Windows, with PowerPoint)
+  // Hidden where hark can't reach PowerPoint. Linking opens a file dialog, so only on this computer.
+  function renderSlides() {
+    const sl = st.slides, linked = !!sl.deck;
+    $("linkBtn").hidden = !sl.canLink;
+    $("slideBtn").hidden = !sl.available;
+    $("slideBtn").disabled = !linked;
+    $("slidesRow").hidden = !sl.available;
+    $("autoSlides").disabled = !linked;
+    $("autoSlides").checked = linked && !!st.session.slides_auto;
+    $("deckName").textContent = linked ? `(${sl.deck})` : "(link a deck first, from the menu)";
+  }
+  $("autoSlides").onchange = () => send({ type: "slides_auto", on: $("autoSlides").checked });
+
   let toastTimer;
-  function toast(text) {
+  $("toast").onclick = () => { clearTimeout(toastTimer); $("toast").hidden = true; };
+  function toast(text, ms = 5000) {
     const t = $("toast");
     t.textContent = text; t.hidden = false;
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), 5000);
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), ms);
   }
 
   // ---------------------------------------------------------------- boot

@@ -19,10 +19,11 @@ from pathlib import Path
 
 import numpy as np
 
-from . import agenda
-from .docops import apply_ops, changed_lines, rename_in_doc
+from . import agenda, slides, timing
+from .docops import apply_ops, changed_lines, find_heading, rename_in_doc
 from .engine import SR, AudioStream, Engine
-from .research import Researcher, clean, clean_url
+from .research import KINDS, Researcher, clean, clean_url, clip, guess_kind
+from .screen import WAKE, addressed, screen_request, screen_sections  # noqa: F401 (WAKE is used by tests)
 from .scribe import Scribe, ScribeError, build_prompt, build_tidy_prompt
 from .modes import MODES
 from .session import Session, list_sessions
@@ -32,9 +33,9 @@ SOURCES = {0: "mic", 1: "call", 2: "replay"}
 CONTEXT_LINES = 12
 ERROR_BACKOFF = 20
 MAX_RESEARCH = 2  # lookups running at once; more wait their turn
-WAKE = re.compile(r"\b(claude|clawed|claud)\b", re.I)  # speech addressed to Claude skips the wait
 WAKE_PAUSE = 1.2  # ...once the sentence is finished
 WAKE_WAIT = 4.0  # ...or after this long a pause, punctuation or not
+HEADING_TEXT = re.compile(r"^#+\s+(.*)$")
 SENTENCE_END = re.compile(r"[.?!][\"')\]]*\s*$")
 DONE_KEPT = 6  # how many of Claude's recent "what I did" notes it is reminded of
 TIDY_MIN_LINES = 12  # don't bother tidying a document shorter than this on Stop
@@ -58,29 +59,42 @@ def research_findings(s: Session, jobs: int = 8) -> list[str]:
     out = []
     for j in [j for j in s.research if j["state"] == "done"][-jobs:]:
         items = [(i, it) for i, it in enumerate(j["items"], 1) if not it.get("added")]
-        if not items:
+        quick = j.get("kind") == "quick" and j.get("answer") and not j.get("added")
+        if not items and not quick:
             continue
-        lines = [f"[R{j['id']}] {clean(j.get('label') or j['q'], 120)}"]
+        where = f" (from the {clean(j['corpus'], 60)} collection)" if j.get("corpus") else ""
+        lines = [f"[R{j['id']}] {clean(j.get('label') or j['q'], 120)}{where}"]
+        if quick or (j.get("kind") == "corpus" and j.get("answer")):
+            lines.append(f"  Answer: {clip(clean(j['answer'], 4000), 1500)}")
         for i, it in items:
             url = clean_url(it.get("url"))
             note = clean(it.get("note"), 250)
-            lines.append(f"  {i}. {clean(it['title'], 250)}" + (f" ({url})" if url else "") + (f": {note}" if note else ""))
+            where = url or clean(it.get("path"), 200)
+            lines.append(f"  {i}. {clean(it['title'], 250)}" + (f" ({where})" if where else "") + (f": {note}" if note else ""))
         out.append("\n".join(lines))
     return out
 
 
 class Client:
-    def __init__(self, ws):
+    def __init__(self, ws, local: bool = False):
         self.ws = ws
+        self.local = local  # a browser on this computer, which may open file dialogs here
         self.editing = False
         self.streams: dict[str, AudioStream] = {}
 
 
+def said(text: str, line: dict) -> str:
+    """A transcript line for Claude, marked if hark already switched the screen for it."""
+    return text + "  [screen request: done by hark]" if line.get("screen") else text
+
+
 class Hub:
-    def __init__(self, engine: Engine, scribe: Scribe, data_dir: Path, threshold: float = 0.40, researcher: Researcher | None = None):
+    def __init__(self, engine: Engine, scribe: Scribe, data_dir: Path, threshold: float = 0.40, researcher: Researcher | None = None,
+                 deck: slides.Deck | None = None):
         self.engine = engine
         self.scribe = scribe
         self.researcher = researcher or Researcher(scribe)
+        self._corpora_checked, self._corpora_seen = 0.0, None
         self.research_queue: list[tuple[Session, dict]] = []
         self.research_tasks: dict[tuple[str, int], asyncio.Task] = {}
         self.promote: list[tuple[Session, str]] = []  # research findings waiting to go into the document
@@ -91,6 +105,7 @@ class Hub:
         self.busy = False
         self.force = False
         self.held: tuple | None = None  # Claude result that arrived while someone was editing
+        self.stage_moves = 0  # room screen switches by hand or by hark itself, not by Claude
         self.tidy_wanted: str | None = None  # "asked", or "stop" when listening stopped in co-writing
         self.tidy_at = 0.0  # earliest time a "stop" tidy may start
         self.held_tidy: tuple | None = None  # tidied document waiting for someone to finish editing
@@ -100,6 +115,9 @@ class Hub:
         self.retry_at = 0.0
         self.claude = {"state": "idle", "detail": "" if scribe.available else getattr(scribe, "problem", "") or "no model available"}
         self._tasks: set[asyncio.Task] = set()
+        self.deck = deck or slides.Deck()
+        self.popup: tuple[str, int, float] | None = None  # (session id, job id, until): the answer popped up on the room screen
+        self.linking = False  # a file dialog is open to link a deck
 
     # -- plumbing -----------------------------------------------------------
     def spawn(self, coro) -> None:
@@ -126,28 +144,171 @@ class Hub:
         return {"type": "status", "listening": listening, "backlog": round(self.engine.backlog, 1),
                 "claude": self.claude, "editing": self.editing, "pending": len(s.lines) - s.processed,
                 "model": self.scribe.model, "asr": self.engine.asr_name, "researching": len(self.research_tasks),
-                "research_ok": self.researcher.available}
+                "research_ok": self.researcher.available, "corpora": self.researcher.collections()}
 
     async def push_status(self) -> None:
         await self.broadcast(self.status())
 
     async def push_state(self, ws=None) -> None:
-        msg = {"type": "state", "session": self.session.public(), "sessions": list_sessions(self.data_dir)}
-        if ws is None:
-            await self.broadcast(msg)
-        else:
-            await self.send(ws, msg)
+        msg = {"type": "state", "session": self.session.public(), "sessions": list_sessions(self.data_dir), "stage": self.session.stage,
+               "sections": screen_sections(self.session.doc, self.session.mode), "slides_available": self.deck.available}
+        # Only a browser on this computer may link a deck: the file dialog opens here.
+        local = lambda w: self.deck.available and bool(getattr(self.clients.get(w), "local", False))  # noqa: E731
+        await asyncio.gather(*(self.send(w, {**msg, "can_link": local(w)}) for w in ([ws] if ws else list(self.clients))))
         await (self.send(ws, self.status()) if ws else self.push_status())
 
     async def push_doc(self, changed: list[int] | None = None, by: str = "you") -> None:
         s = self.session
         s.save()
+        # The held section follows renumbering; if it's gone, the screen follows the talk again.
+        s.stage = find_heading(s.doc, s.stage)
         await self.broadcast({"type": "doc", "doc": s.doc, "version": s.version, "changed": changed or [],
-                              "by": by, "can_undo": bool(s.history), "title": s.title})
+                              "by": by, "can_undo": bool(s.history), "title": s.title, "stage": s.stage,
+                              "sections": screen_sections(s.doc, s.mode)})
+
+    async def _screen_request(self, s: Session, line: dict) -> None:
+        """Switch the room screen straight away for a clear "Claude, show the methods", with no Claude call.
+        Claude still sees the line later, with a note that it was done, so it doesn't do it again."""
+        if s is not self.session:
+            return
+        tries = [[line]]
+        prev = s.lines[-2] if len(s.lines) > 1 else None
+        if (line["kind"] == "speech" and prev and prev["kind"] == "speech" and not prev.get("screen")
+                and line["added"] - prev["added"] < 8 and addressed(prev["text"])):
+            tries.append([prev, line])  # "Claude," and the request can land in separate lines
+        for lines in tries:
+            req = screen_request(" ".join(l["text"] for l in lines), s.doc, need_wake=line["kind"] == "speech",
+                                 mode=s.mode, current=s.stage or s.showing, slides=self.deck.available)
+            if req:
+                break
+        else:
+            return
+        kind, heading = req
+        if kind == "slide":
+            for l in lines:
+                l["screen"] = True
+            m = HEADING_TEXT.match(heading or "")
+            note = f"Put {m.group(1) if m else 'what the room screen shows'} on a slide"
+            s.done = (s.done + [f"[{time.strftime('%H:%M:%S')}] {note} (hark did this for you)"])[-DONE_KEPT:]
+            self.spawn(self.slide_this(s, heading, "voice"))
+            return
+        if kind == "follow":
+            note = "The room screen follows the conversation again"
+        else:
+            m = HEADING_TEXT.match(heading or "")
+            note = f"Showing {m.group(1) if m else heading} on the room screen"
+        for l in lines:
+            l["screen"] = True
+        if heading != s.stage:
+            await self.set_stage(heading, "voice")
+            await self.broadcast({"type": "toast", "text": f"✓ {note}"})
+        s.done = (s.done + [f"[{time.strftime('%H:%M:%S')}] {note} (hark did this for you)"])[-DONE_KEPT:]
+
+    async def set_stage(self, heading: str | None, by: str) -> bool:
+        """Hold a section on the room screen (None: follow the conversation). False if no such section."""
+        s = self.session
+        found = find_heading(s.doc, heading)
+        if heading and not found:
+            return False
+        s.stage = found
+        if by != "claude":
+            self.stage_moves += 1
+        await self.broadcast({"type": "stage", "heading": found, "by": by})
+        return True
+
+    # -- slides ---------------------------------------------------------------
+    def _can_slide(self, s: Session) -> bool:
+        """PowerPoint can be reached here, and this session has a deck linked."""
+        return self.deck.available and bool(s.pptx)
+
+    def _popped(self, s: Session, job: dict) -> None:
+        """Note an answer the room screen pops up, for "put that on a slide"."""
+        if job.get("kind") in slides.POPUP_KINDS and job["state"] == "done" and job.get("answer"):
+            self.popup = (s.id, job["id"], time.time() + slides.popup_seconds(job["answer"]))
+
+    def _popup_job(self, s: Session) -> dict | None:
+        """The answer popped up on the room screen now, or until a little while ago."""
+        if not self.popup or self.popup[0] != s.id or time.time() > self.popup[2] + slides.POPUP_GRACE:
+            return None
+        job = s.research_job(self.popup[1])
+        return job if job and job["state"] == "done" else None
+
+    async def slide_job(self, s: Session, job: dict) -> str | None:
+        """Add a finished card to the linked deck. None if added, otherwise why not; the card says which."""
+        note = await self.deck.add(s.pptx, slides.job_slide(job))
+        if note is None:
+            job["slide"] = time.time()
+            job.pop("slides_note", None)
+        else:
+            job["slides_note"] = note
+        s.save()
+        await self.push_research(s, job)
+        return note
+
+    async def slide_this(self, s: Session, heading: str | None = None, by: str = "you", ws=None) -> None:
+        """Put a named section on a slide, or else what the room screen shows: an answer that popped up, or the section."""
+        say = (lambda text: self.send(ws, {"type": "toast", "text": text})) if ws else (lambda text: self.broadcast({"type": "toast", "text": text}))
+        if not self.deck.available:
+            return
+        if not s.pptx:
+            await say("No PowerPoint deck is linked. Link one on this computer: ☰ → Link a PowerPoint file…")
+            return
+        job = None if heading else self._popup_job(s)
+        if job:
+            what = job.get("label") or job["q"]
+            note = await self.slide_job(s, job)
+        else:
+            found = find_heading(s.doc, heading or s.stage or s.showing)
+            payload = slides.section_slide(s.doc, found, s.mode) if found else None
+            if not payload:
+                await say(f"There's no section called {heading} to put on a slide." if heading
+                          else "There's nothing on the room screen to put on a slide yet.")
+                return
+            m = HEADING_TEXT.match(found)
+            what = m.group(1) if m else found
+            note = await self.deck.add(s.pptx, payload)
+        await say(f"✓ Added {what} to slides" if note is None else f"{what} wasn't added to slides: {note}")
+
+    async def _link(self, ws) -> None:
+        """Ask for a deck with a file dialog on this computer. Cancelling changes nothing. The deck is linked
+        to the session open when the dialog closes, which may not be the one open when it opened."""
+        self.linking = True
+        try:
+            path = await self.deck.pick(self.session.pptx)
+        except slides.SlidesError as e:
+            await self.send(ws, {"type": "toast", "text": f"Couldn't open the file dialog: {e}"})
+            return
+        finally:
+            self.linking = False
+        if not path:
+            return
+        s = self.session
+        s.pptx = path
+        s.save()
+        await self.push_state()
+        await self.send(ws, {"type": "toast", "text": f"✓ Linked {s.public()['deck']}. Slides are added to it while it's open in PowerPoint."})
+
+    async def _slides_msg(self, ws, kind: str, msg: dict) -> None:
+        s = self.session
+        if not self.deck.available:
+            return
+        if kind == "slides_auto":
+            s.slides_auto = bool(msg.get("on")) and bool(s.pptx)
+            s.save()
+            await self.push_state()
+        elif kind == "slides_add":
+            job = s.research_job(msg.get("id"))
+            if job and job["state"] == "done" and self._can_slide(s):
+                self.spawn(self.slide_job(s, job))
+        elif kind == "slides_this":
+            heading = msg.get("heading")
+            self.spawn(self.slide_this(s, heading.strip() if isinstance(heading, str) and heading.strip() else None, "you", ws))
+        elif kind == "slides_link" and getattr(self.clients.get(ws), "local", False) and not self.linking:
+            self.spawn(self._link(ws))
 
     # -- connections --------------------------------------------------------
-    async def connect(self, ws) -> None:
-        self.clients[ws] = Client(ws)
+    async def connect(self, ws, local: bool = False) -> None:
+        self.clients[ws] = Client(ws, local)
         await self.push_state(ws)
 
     async def disconnect(self, ws) -> None:
@@ -189,6 +350,7 @@ class Hub:
         sid = session.speakers.assign(emb, len(samples) / SR, st.last_speaker)
         st.last_speaker = sid
         line = session.add_line(t, st.source, sid, text)
+        await self._screen_request(session, line)
         session.save()
         if len(session.speakers.alias) != merges:
             await self.push_state()  # two speakers were merged: relabel earlier lines everywhere
@@ -238,6 +400,8 @@ class Hub:
         while True:
             await asyncio.sleep(0.5)
             try:
+                await self._watch_corpora()
+                await self._time_check()
                 if self._prep_due():
                     await self._prepare()
                 elif self._due():
@@ -246,6 +410,65 @@ class Hub:
                     await self._tidy()
             except Exception:  # keep the loop alive whatever happens
                 log.exception("update failed")
+
+    async def _watch_corpora(self) -> None:
+        """Every few seconds, tell the page if collections were added or removed elsewhere (e.g. `hark --add-corpus`)."""
+        if time.time() - self._corpora_checked < 5:
+            return
+        self._corpora_checked = time.time()
+        names = [c["name"] for c in self.researcher.collections()]
+        if names != self._corpora_seen:
+            self._corpora_seen = names
+            await self.push_status()
+
+    def active_corpus(self, s: Session) -> str | None:
+        """The collection chosen for this session, if it still exists. Claude searches no other."""
+        return self.researcher.find(s.corpus) if s.corpus else None
+
+    def _collections_for(self, s: Session) -> list[dict]:
+        # Claude is only told about the session's own collection, so it can't pick another one.
+        active = self.active_corpus(s)
+        return [c for c in self.researcher.collections() if c["name"] == active]
+
+    # -- meeting time and answers ----------------------------------------------
+    async def _answered(self, s: Session, data: dict) -> None:
+        """Claude's answer to a question about the session ("what's left?"), and an end time someone said."""
+        ends = str(data.get("ends") or "").strip()
+        at = timing.parse_clock(ends, exact=True) if ends else None
+        if at and at > time.time() - 60 and at != s.ends:
+            s.set_ends(at)
+            s.save()
+            if s is self.session:
+                await self.push_state()
+                await self.broadcast({"type": "toast", "text": f"✓ This session ends at {timing.hhmm(at)}"})
+        a = data.get("answer")
+        text = clip(clean(a.get("text"), 1200), 600) if isinstance(a, dict) else ""
+        if not text:
+            return
+        label = clean(a.get("question"), 120) or "Your question"
+        job = s.add_research(label, "conversation", "done", label, kind="meeting")
+        job.update(answer=text, finished=time.time())
+        self._popped(s, job)
+        s.save()
+        await self.push_research(s, job)
+
+    async def _time_check(self) -> None:
+        """Near the end, if asked to, remind the room what's still open. Only while someone is listening."""
+        s = self.session
+        if not (s.ends and s.nudge and not s.nudged and self.listening):
+            return
+        now = time.time()
+        if not s.ends - timing.NUDGE_BEFORE <= now < s.ends:
+            return
+        s.nudged = True
+        text = timing.reminder(s.doc, now, s.ends)
+        if text:
+            label = f"{timing.minutes(s.ends - now).capitalize()} left"
+            job = s.add_research(label, "reminder", "done", label, kind="meeting")
+            job.update(answer=text, finished=now)
+            self._popped(s, job)
+            await self.push_research(s, job)
+        s.save()
 
     def _due(self) -> bool:
         s = self.session
@@ -257,11 +480,11 @@ class Hub:
         now = time.time()
         if now < self.retry_at and not self.force:
             return False
-        if self.force or any(l["kind"] == "typed" for l in pending):
+        if self.force or any(l["kind"] == "typed" and not l.get("screen") for l in pending):
             return True
         pause = now - pending[-1]["added"]
         finished = SENTENCE_END.search(pending[-1]["text"]) and pause >= WAKE_PAUSE
-        if (finished or pause >= WAKE_WAIT) and any(WAKE.search(l["text"]) for l in pending):
+        if (finished or pause >= WAKE_WAIT) and any(addressed(l["text"]) and not l.get("screen") for l in pending):
             return True  # someone spoke to Claude: act on it now, not at the next interval
         since = now - self.last_call
         chars = sum(len(l["text"]) for l in pending)
@@ -275,13 +498,23 @@ class Hub:
         pending = s.lines[s.processed:upto]
         adds = [t for (ss, t) in self.promote if ss is s]
         self.promote = [(ss, t) for (ss, t) in self.promote if ss is not s]
-        requested = [j["q"] for j in s.research[-15:]]
+        requested = [j["q"] for j in s.research[-15:] if j.get("kind") != "meeting"]
         findings = research_findings(s)
-        earlier = [s.fmt_line(l) for l in s.lines[max(0, s.processed - CONTEXT_LINES):s.processed] if l["kind"] == "speech"]
-        new = [s.fmt_line(l) for l in pending if l["kind"] == "speech"]
-        typed = [l["text"] for l in pending if l["kind"] == "typed"]
+        earlier = [said(s.fmt_line(l), l) for l in s.lines[max(0, s.processed - CONTEXT_LINES):s.processed] if l["kind"] == "speech"]
+        new = [said(s.fmt_line(l), l) for l in pending if l["kind"] == "speech"]
+        typed = [said(l["text"], l) for l in pending if l["kind"] == "typed"]
+        # A screen request hark already carried out. "Next section" is relative, so if Claude
+        # also acted on it the screen would move twice; nor should Claude's older view of the
+        # talk undo a switch someone made while it was thinking.
+        no_show = any(l.get("screen") for l in pending)
+        moves = self.stage_moves
         base = s.doc
-        prompt = build_prompt(s.brief, base, s.speaker_notes(), earlier, new, typed, adds, requested, findings, s.done[-DONE_KEPT:])
+        numbered = screen_sections(base, s.mode) if s.mode in ("outline", "notes") else None
+        prompt = build_prompt(s.brief, base, s.speaker_notes(), earlier, new, typed, adds, requested, findings, s.done[-DONE_KEPT:],
+                              on_screen=s.stage, sections=numbered, collections=self._collections_for(s),
+                              collections_unpicked=not self.active_corpus(s) and bool(self.researcher.collections()),
+                              clock=timing.clock_note(time.time(), s.ends),
+                              slide_deck=("linked" if s.pptx else "unlinked") if self.deck.available else "")
         detail = f"{len(pending)} new line{'s' * (len(pending) != 1)}" if pending else ""
         if adds:
             detail = (detail + ", " if detail else "") + "adding research"
@@ -299,20 +532,27 @@ class Hub:
             self.busy = False
             self.last_call = time.time()
         await self._requested_research(s, data.get("research") or [])
+        await self._answered(s, data)
         if s is not self.session:
             return  # session switched while Claude was thinking
         if data.get("tidy"):
             self.tidy_wanted = "asked"
+        data["_no_show"] = no_show or moves != self.stage_moves
+        data["_no_slide"] = no_show
         self.held = (s, upto, data, took, base)
         await self._maybe_release_held()
 
     # -- starting from an agenda ---------------------------------------------
-    async def load_agenda(self, text: str, mode: str | None = None) -> bool:
-        """Start the document from an agenda. A session that already has content is kept, and a new one started."""
-        text = (text or "").strip()[:agenda.MAX_CHARS]
+    async def load_agenda(self, text: str, mode: str | None = None, aims: list | None = None, ends: str = "",
+                          nudge: bool | None = None) -> bool:
+        """Start the document from an agenda. A session that already has content is kept, and a new one started.
+        Aims and an end time can come in the agenda text ("Aims: ...", "Ends: 11:30") or separately (the dialog)."""
+        text, more_aims, said_ends = agenda.plan((text or "").strip()[:agenda.MAX_CHARS])
+        aims = [str(a).strip()[:300] for a in (aims or []) if str(a).strip()][:10] + more_aims
         _title, _context, items = agenda.parse(text)
-        if not items:
+        if not items and not aims:
             return False
+        at = timing.parse_clock(ends, exact=True) if ends else timing.parse_clock(said_ends) if said_ends else None
         s = self.session
         mode = mode if mode in MODES else s.mode
         if not s.untouched:
@@ -320,9 +560,11 @@ class Hub:
             s = self._switch(Session(self.data_dir, mode=mode, threshold=self.threshold))
         else:
             s.set_mode(mode)
-        s.set_doc(agenda.layout(text, s.mode), by="agenda")
-        if s.mode == "grill" and self.scribe.available:
-            self.prep = (s, text)
+        s.set_doc(agenda.layout(text, s.mode, aims), by="agenda")
+        if at or nudge is not None:
+            s.set_ends(at or s.ends, nudge)
+        if s.mode == "grill" and self.scribe.available and items:
+            self.prep = (s, text, aims)
         s.save()
         await self.push_state()
         return True
@@ -331,7 +573,7 @@ class Hub:
         return bool(self.prep) and not self.busy and not self.held and not self.held_tidy and self.scribe.available
 
     async def _prepare(self) -> None:
-        s, text = self.prep
+        s, text, aims = self.prep
         self.prep = None
         if s is not self.session:
             return
@@ -340,7 +582,7 @@ class Hub:
         await self.push_status()
         base = s.doc
         try:
-            data, took = await self.scribe.prepare(agenda.build_prep_prompt(s.brief, text))
+            data, took = await self.scribe.prepare(agenda.build_prep_prompt(s.brief, text, aims))
         except ScribeError as e:
             self.claude = {"state": "error", "detail": f"couldn't prepare the questions: {e}"}
             log.warning("prepare: %s", e)
@@ -486,6 +728,16 @@ class Hub:
             await self.push_doc(changed_lines(old, s.doc), by="claude")
         else:
             s.save()
+        show = data.get("show")
+        if isinstance(show, str) and data.get("_no_show"):
+            log.info("ignored show %r: hark already switched the screen", show)
+        elif isinstance(show, str) and not await self.set_stage(show.strip() or None, "claude"):
+            log.info("asked to show %r, which isn't a section", show)
+        slide = data.get("slide")
+        if isinstance(slide, str) and data.get("_no_slide"):
+            log.info("ignored slide %r: hark already did the request", slide)
+        elif isinstance(slide, str) and self._can_slide(s):
+            self.spawn(self.slide_this(s, slide.strip() or None, "claude"))
         # Findings Claude says it added by voice request. Only mark ones whose link or
         # title really went into the document, so the panel's Add buttons stay honest.
         written = "\n".join(str(o.get("text") or "") for o in ops if isinstance(o, dict))
@@ -495,6 +747,8 @@ class Hub:
                 continue
             nums = used.get("items") or range(1, len(job["items"]) + 1)
             touched = False
+            if job.get("kind") == "quick" and not job.get("added"):
+                job["added"] = touched = True  # the explanation itself has no link to check for
             for n in list(nums)[:10]:
                 if isinstance(n, int) and 1 <= n <= len(job["items"]):
                     it = job["items"][n - 1]
@@ -520,13 +774,24 @@ class Hub:
 
     async def _requested_research(self, s: Session, reqs: list, state: str | None = None, origin: str = "conversation") -> None:
         """Lookups the scribe heard someone ask for (or, with `state="proposed"`, ones it suggests)."""
-        known = {j["q"].strip().lower() for j in s.research}
+        known = {(j["q"].strip().lower(), j.get("corpus")) for j in s.research}
         for r in reqs[:3]:
-            q = str((r or {}).get("question") or "").strip()
-            if not q or q.lower() in known:
+            if not isinstance(r, dict):
                 continue
-            known.add(q.lower())
-            job = s.add_research(q, origin, state or ("queued" if s.research_auto else "proposed"), str(r.get("label") or ""))
+            q = str(r.get("question") or "").strip()
+            kind = r.get("kind") if r.get("kind") in KINDS else guess_kind(q)
+            # Whatever collection was named, only the session's own one is ever searched.
+            corpus = self.active_corpus(s) if kind == "corpus" else None
+            if kind == "corpus" and not corpus:
+                named = self.researcher.find(r.get("corpus"))
+                await self.broadcast({"type": "toast", "text": f"To let Claude search {named or 'your collections'}, pick "
+                                                               f"{'it' if named else 'one'} in the Research panel, in the menu next to "
+                                                               "Look something up (it says Web now), then ask again."})
+                continue
+            if not q or (q.lower(), corpus) in known:
+                continue
+            known.add((q.lower(), corpus))
+            job = s.add_research(q, origin, state or ("queued" if s.research_auto else "proposed"), str(r.get("label") or ""), kind, corpus)
             if job["state"] == "queued":
                 self.research_queue.append((s, job))
             await self.push_research(s, job)
@@ -548,7 +813,7 @@ class Hub:
         job.update(state="running", started=time.time(), error="")
         await self.push_research(s, job)
         try:
-            result, took = await self.researcher.run(job["q"], s.title)
+            result, took = await self.researcher.run(job["q"], s.title, job.get("kind", "sources"), job.get("corpus"))
             job.update(result, state="done", took=round(took))
         except asyncio.CancelledError:
             job.update(state="cancelled")
@@ -561,6 +826,11 @@ class Hub:
         s.save()
         self.research_tasks.pop((s.id, job["id"]), None)
         await self.push_research(s, job)
+        if job["state"] == "done":
+            self._popped(s, job)
+            # The card shows first; the slide follows if the deck is open. Only results finished from now on.
+            if s.slides_auto and self._can_slide(s) and job.get("kind") in slides.AUTO_KINDS:
+                self.spawn(self.slide_job(s, job))
 
     def _queue_research(self, s: Session, job: dict) -> None:
         job.update(state="queued", error="")
@@ -572,10 +842,16 @@ class Hub:
         if kind == "research_ask":
             q = (msg.get("q") or "").strip()
             if q:
-                job = s.add_research(q, "typed", "queued")
+                corpus = self.active_corpus(s)
+                job = s.add_research(q, "typed", "queued", kind="corpus" if corpus else guess_kind(q), corpus=corpus)
                 await self.push_research(s, job)
                 self._queue_research(s, job)
                 s.save()
+            return
+        if kind == "research_corpus":
+            s.corpus = self.researcher.find(msg.get("name"))
+            s.save()
+            await self.push_state()
             return
         if kind == "research_auto":
             s.research_auto = bool(msg.get("on"))
@@ -602,22 +878,64 @@ class Hub:
             job["state"] = "dismissed"
             s.research.remove(job)
             await self.push_research(s, removed=job["id"])
+        elif kind == "research_sources" and job["state"] == "done" and job.get("kind") == "quick" and not job.get("deeper"):
+            deeper = s.add_research(job["q"], job["origin"], "queued", job.get("label") or "", "sources")
+            job["deeper"] = deeper["id"]
+            await self.push_research(s, job)
+            await self.push_research(s, deeper)
+            self._queue_research(s, deeper)
         elif kind == "research_add" and job["state"] == "done":
             idx = msg.get("items")
+            quick = job.get("kind") == "quick"
+            if quick and job.get("added"):
+                return
             picks = [it for i, it in enumerate(job["items"]) if (idx is None or i in idx) and not it.get("added")]
-            if not picks:
+            if not picks and not (quick and job.get("answer")):
                 return
             lines = [f"Request: {job['q']}"]
-            if idx is None and job.get("answer"):
+            if (idx is None or quick) and job.get("answer"):
                 lines.append(f"Answer: {job['answer']}")
+            if quick:
+                job["added"] = True
+                lines.append("(A quick explanation: add it as a short point, with the source link if there is one.)")
             for it in picks:
                 it["added"] = True
-                title = f"[{it['title']}]({it['url']})" if it.get("url") else it["title"]
+                title = f"[{it['title']}]({it['url']})" if it.get("url") else it["title"] + (f" ({it['path']})" if it.get("path") else "")
                 lines.append(f"- {title}" + (f": {it['note']}" if it.get("note") else ""))
             self.promote.append((s, "\n".join(lines)))
             self.force = True
             await self.push_research(s, job)
         s.save()
+
+    # -- collections ----------------------------------------------------------
+    async def _corpus_msg(self, ws, kind: str, msg: dict) -> None:
+        """Add a GitHub repo, update a collection now, or forget one. Folders on this computer can only be
+        added from the command line, so a page (or a leaked link) can't point Claude at any folder it likes."""
+        from . import config
+
+        say = lambda text: self.send(ws, {"type": "toast", "text": text})
+        name = str(msg.get("name") or "")
+        try:
+            if kind == "corpus_add":
+                spec = str(msg.get("spec") or "").strip()
+                if not spec:
+                    return
+                await say(f"Fetching {spec} from GitHub…")
+                c = await asyncio.to_thread(config.add_corpus, spec, str(msg.get("about") or "")[:300], False)
+                corpus = self.researcher.corpora.get(c["name"])
+                n = await asyncio.to_thread(corpus.sync) if corpus else {"files": 0}
+                await say(f"Added {c['name']}: {n['files']} files Claude can search.")
+            elif kind == "corpus_update":
+                corpus = self.researcher.corpora.get(name)
+                if corpus:
+                    n = await asyncio.to_thread(corpus.sync, True)
+                    await say(f"{name} is up to date: {n['files']} files" + (f". {corpus.problem}" if corpus.problem else "."))
+            elif kind == "corpus_remove":
+                if await asyncio.to_thread(config.remove_corpus, name):
+                    await say(f"Forgot {name}.")
+        except (OSError, ValueError) as e:
+            await say(str(e)[:300])
+        await self.push_status()
 
     # -- messages from the page --------------------------------------------
     async def handle(self, ws, msg: dict) -> None:
@@ -653,8 +971,16 @@ class Hub:
             text = (msg.get("text") or "").strip()
             if text:
                 line = s.add_line(time.time(), "typed", s.speakers.named("You (typed)"), text, kind="typed")
+                await self._screen_request(s, line)
                 s.save()
                 await self.broadcast({"type": "line", "line": s.public_line(line), "speakers": s.speakers.public()})
+        elif kind == "stage":
+            heading = msg.get("heading")
+            if not await self.set_stage(heading if isinstance(heading, str) else None, "you"):
+                await self.send(ws, {"type": "stage", "heading": s.stage, "by": "you"})
+        elif kind == "showing":
+            heading = msg.get("heading")
+            s.showing = heading[:300] if isinstance(heading, str) else None
         elif kind == "update_now":
             self.force = True
         elif kind == "tidy":
@@ -663,6 +989,10 @@ class Hub:
                 await self.send(ws, {"type": "toast", "text": "Claude will tidy up as soon as this update is done."})
         elif isinstance(kind, str) and kind.startswith("research_"):
             await self._research_msg(kind, msg)
+        elif isinstance(kind, str) and kind.startswith("corpus_"):
+            await self._corpus_msg(ws, kind, msg)
+        elif isinstance(kind, str) and kind.startswith("slides_"):
+            await self._slides_msg(ws, kind, msg)
         elif kind == "rename":
             was = s.speakers.name(msg.get("id", ""))
             sid = s.speakers.rename(msg.get("id", ""), msg.get("name", ""))
@@ -694,8 +1024,19 @@ class Hub:
             self._switch(Session(self.data_dir, mode=msg.get("mode") or s.mode, threshold=self.threshold))
             await self.push_state()
         elif kind == "agenda":
-            if not await self.load_agenda(str(msg.get("text") or ""), msg.get("mode")):
-                await self.send(ws, {"type": "toast", "text": "No agenda items found. Put one item per line or bullet."})
+            aims = msg.get("aims") if isinstance(msg.get("aims"), list) else None
+            nudge = msg.get("nudge") if isinstance(msg.get("nudge"), bool) else None
+            if not await self.load_agenda(str(msg.get("text") or ""), msg.get("mode"), aims, str(msg.get("ends") or ""), nudge):
+                await self.send(ws, {"type": "toast", "text": "No agenda items or aims found. Put one item per line or bullet."})
+        elif kind == "timing":
+            ends = str(msg.get("ends") or "").strip()
+            at = timing.parse_clock(ends, exact=True) if ends else None
+            if ends and not at:
+                await self.send(ws, {"type": "toast", "text": "That end time wasn't a time of day, such as 11:30."})
+                return
+            s.set_ends(at, bool(msg.get("nudge")))
+            s.save()
+            await self.push_state()
         elif kind == "open_session":
             sid = msg.get("id", "")
             if sid and (self.data_dir / sid / "session.json").exists() and "/" not in sid and "\\" not in sid and ".." not in sid:

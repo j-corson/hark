@@ -123,5 +123,5 @@ async def rebuild(path: Path, data_dir: Path, mode: str, scribe: Scribe, say=pri
         s.processed = b
         s.save()
         say(f"  step {n}/{len(runs)}: {len(data.get('ops') or []) - len(failed)} edits in {took:.0f}s")
-    say(f"Done: \"{s.title}\". Open it in hark with More → Open a previous session.")
+    say(f"Done: \"{s.title}\". Open it in hark from the ☰ menu: Open a previous session.")
     return s

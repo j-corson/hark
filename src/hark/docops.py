@@ -23,6 +23,32 @@ def _heading_key(line: str) -> str | None:
     return _norm(m.group(2)) if m else None
 
 
+def _loose(text: str) -> str:
+    """Heading text without emphasis or a leading number, so "### 3. **X**" matches "### 4. X"."""
+    return _norm(re.sub(r"^\d+[.)]\s*", "", re.sub(r"[*_`]", "", text)))
+
+
+def find_heading(doc: str, want: str | None) -> str | None:
+    """The ## or ### heading line in `doc` that `want` names (a heading line, or just its text).
+
+    An exact line wins; otherwise a unique match ignoring case, emphasis and numbering, so a
+    section still matches after it is renumbered. None if nothing (or more than one) matches."""
+    want = (want or "").strip()
+    if not want:
+        return None
+    heads = []
+    for line in doc.split("\n"):
+        m = HEADING.match(line.strip())
+        if m and 2 <= len(m.group(1)) <= 3:
+            heads.append((line.strip(), m.group(2)))
+    if any(line == want for line, _ in heads):
+        return want
+    m = HEADING.match(want)
+    key = _loose(m.group(2) if m else want)
+    hits = [line for line, text in heads if _loose(text) == key]
+    return hits[0] if len(hits) == 1 else None
+
+
 def _find_lines(lines: list[str], find: str) -> tuple[int, int] | None:
     """Locate `find` as a run of whole lines, ignoring whitespace and case.
 
@@ -88,6 +114,24 @@ def _add_section(doc: str, block: str) -> str:
     at = next((i for i, l in enumerate(lines) if _heading_key(l) == WORKING_NOTES), len(lines))
     new = block.strip("\n").split("\n")
     return "\n".join(lines[:at] + [""] + new + [""] + lines[at:]) + "\n"
+
+
+def headings_above(lines: list[str], start: int) -> list[str]:
+    """Loose keys of the headings a section sits under, nearest first ("### 3. X" under "## Items": ["items"])."""
+    out, level = [], len(HEADING.match(lines[start].strip()).group(1))
+    for i in range(start - 1, -1, -1):
+        m = HEADING.match(lines[i].strip())
+        if m and len(m.group(1)) < level:
+            out.append(_loose(m.group(2)))
+            level = len(m.group(1))
+    return out
+
+
+def in_working_notes(doc: str, heading: str) -> bool:
+    """Is this heading line "## Working notes", or a section inside it? Those are still being weighed."""
+    lines = doc.split("\n")
+    idx = next((i for i, l in enumerate(lines) if l.strip() == heading.strip()), None)
+    return idx is not None and WORKING_NOTES in [_loose(HEADING.match(heading.strip()).group(2))] + headings_above(lines, idx)
 
 
 def _section_span(lines: list[str], heading: str) -> tuple[int, int] | None:

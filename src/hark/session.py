@@ -54,8 +54,16 @@ class Session:
         self._next_line = 1
         self.research: list[dict] = []  # background lookups, newest last
         self.research_auto = True  # start lookups people ask for out loud without asking first
+        self.corpus: str | None = None  # the one collection Claude may search in this session, chosen on the page
         self._next_research = 1
         self.done: list[str] = []  # Claude's recent "what I did" notes, so it doesn't redo an instruction
+        self.stage: str | None = None  # heading line held on the room screen by choice; None = follow the talk
+        self.showing: str | None = None  # what a room screen last said it shows, for "next section"
+        self.ends: float | None = None  # when the meeting is due to end, if anyone said
+        self.nudge = False  # remind the room near the end if aims or agenda items are still open
+        self.nudged = False  # ...and that reminder has been shown
+        self.pptx: str | None = None  # the PowerPoint deck slides are added to, if one is linked
+        self.slides_auto = False  # add finished results to that deck while it's open
 
     # -- paths / naming -----------------------------------------------------
     @property
@@ -103,10 +111,15 @@ class Session:
         self.lines.append(line)
         return line
 
-    def add_research(self, question: str, origin: str, state: str, label: str = "") -> dict:
+    def add_research(self, question: str, origin: str, state: str, label: str = "", kind: str = "sources",
+                     corpus: str | None = None) -> dict:
+        if kind == "corpus" and not corpus:
+            kind = "sources"
         job = {"id": self._next_research, "q": question.strip()[:500], "label": label.strip()[:120] or question.strip()[:120],
-               "origin": origin, "state": state,
+               "origin": origin, "state": state, "kind": kind if kind in ("quick", "sources", "corpus", "meeting") else "sources",
                "created": time.time(), "answer": "", "items": [], "error": "", "took": 0}
+        if job["kind"] == "corpus":
+            job["corpus"] = corpus
         self._next_research += 1
         self.research.append(job)
         return job
@@ -145,7 +158,10 @@ class Session:
             "lines": [self.public_line(l) for l in self.lines[-400:]],
             "processed_id": self.lines[self.processed - 1]["id"] if self.processed else 0,
             "speakers": self.speakers.public(), "dir": str(self.dir),
-            "research": self.research, "research_auto": self.research_auto,
+            "research": self.research, "research_auto": self.research_auto, "corpus": self.corpus,
+            "ends": self.ends, "nudge": self.nudge,
+            # Only the deck's name: phones on the network needn't see paths on this computer.
+            "deck": re.split(r"[\\/]", self.pptx)[-1] if self.pptx else None, "slides_auto": self.slides_auto,
         }
 
     # -- persistence --------------------------------------------------------
@@ -166,7 +182,9 @@ class Session:
             "id": self.id, "created": self.created, "mode": self.mode, "brief": self.brief, "interval": self.interval,
             "doc": self.doc, "history": self.history[-20:], "lines": self.lines, "processed": self.processed,
             "next_line": self._next_line, "speakers": self.speakers.to_json(),
-            "research": self.research, "research_auto": self.research_auto, "next_research": self._next_research,
+            "research": self.research, "research_auto": self.research_auto, "corpus": self.corpus, "next_research": self._next_research,
+            "ends": self.ends, "nudge": self.nudge, "nudged": self.nudged,
+            "pptx": self.pptx, "slides_auto": self.slides_auto,
         }
         _atomic_write(self.dir / "session.json", json.dumps(state))
         if self._log:
@@ -199,19 +217,36 @@ class Session:
         for j in s.research:
             if j["state"] in ("queued", "running"):  # hark was restarted mid-lookup
                 j["state"], j["error"] = "error", "Interrupted when hark restarted"
+            j.pop("slides_note", None)  # "deck not open" was true then, not now
         s.research_auto = d.get("research_auto", True)
+        s.corpus = d.get("corpus") if isinstance(d.get("corpus"), str) else None
         s._next_research = d.get("next_research", len(s.research) + 1)
+        s.ends = d.get("ends") if isinstance(d.get("ends"), (int, float)) else None
+        s.nudge, s.nudged = bool(d.get("nudge")), bool(d.get("nudged"))
+        s.pptx = d.get("pptx") if isinstance(d.get("pptx"), str) else None
+        s.slides_auto = bool(d.get("slides_auto"))
         return s
+
+    def set_ends(self, ends: float | None, nudge: bool | None = None) -> None:
+        if ends != self.ends:
+            self.nudged = False  # a new end time gets its own reminder
+        self.ends = ends
+        if nudge is not None:
+            self.nudge = nudge
 
 
 def research_markdown(title: str, jobs: list[dict]) -> str:
     out = [f"# Research: {title}", ""]
     for j in jobs:
-        out += [f"## {j.get('label') or j['q']}", "", f"_{j['q']}_", ""]
+        out += [f"## {j.get('label') or j['q']}", "", f"_{j['q']}_" + (f" (searched {j['corpus']})" if j.get("corpus") else ""), ""]
         if j.get("answer"):
             out += [j["answer"], ""]
+        if j.get("kind") == "quick" and not j.get("items"):
+            out += ["_Answered from Claude's own knowledge, without a source._", ""]
+        elif j.get("kind") == "meeting":
+            out += ["_Answered from this session's notes and discussion._", ""]
         for it in j.get("items", []):
-            link = f" <{it['url']}>" if it.get("url") else ""
+            link = f" <{it['url']}>" if it.get("url") else (f" (`{it['path']}`)" if it.get("path") else "")
             out.append(f"- **{it['title']}**{link}" + (f": {it['note']}" if it.get("note") else ""))
         out.append("")
     return "\n".join(out)

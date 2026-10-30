@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import json
 import logging
 from importlib import resources
@@ -29,6 +30,14 @@ def same_origin(request: web.Request) -> bool:
     return host in allowed
 
 
+def loopback(request: web.Request) -> bool:
+    """A browser on this computer (not a phone on the network): only it may open file dialogs here."""
+    try:
+        return ipaddress.ip_address(request.remote or "").is_loopback
+    except ValueError:
+        return False
+
+
 def make_app(hub: Hub, token: str) -> web.Application:
     def authed(request: web.Request) -> bool:
         return hmac.compare_digest(request.cookies.get(COOKIE, ""), token)
@@ -50,9 +59,11 @@ def make_app(hub: Hub, token: str) -> web.Application:
             raise web.HTTPForbidden(text="Open hark using the link printed in the terminal (it carries a key).")
         return await handler(request)
 
-    async def index(_request):
-        return web.Response(body=(STATIC / "index.html").read_bytes(), content_type="text/html",
-                            headers={"Cache-Control": "no-store"})
+    def page(name: str):
+        async def handler(_request):
+            return web.Response(body=(STATIC / name).read_bytes(), content_type="text/html",
+                                headers={"Cache-Control": "no-store"})
+        return handler
 
     async def static(request):
         name = request.match_info["name"]
@@ -70,7 +81,7 @@ def make_app(hub: Hub, token: str) -> web.Application:
             raise web.HTTPForbidden(text="This page isn't hark.")
         ws = web.WebSocketResponse(heartbeat=20, max_msg_size=8 * 1024 * 1024)
         await ws.prepare(request)
-        await hub.connect(ws)
+        await hub.connect(ws, local=loopback(request))
         try:
             async for msg in ws:
                 if msg.type == WSMsgType.BINARY:
@@ -88,7 +99,8 @@ def make_app(hub: Hub, token: str) -> web.Application:
         hub.spawn(hub.updater())
 
     app = web.Application(middlewares=[guard])
-    app.router.add_get("/", index)
+    app.router.add_get("/", page("index.html"))
+    app.router.add_get("/present", page("present.html"))  # read-only room screen
     app.router.add_get("/modes", modes)
     app.router.add_get("/ws", ws_handler)
     app.router.add_get("/static/{name}", static)

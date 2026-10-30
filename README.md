@@ -49,17 +49,17 @@ The link includes a private key, and only browsers that have opened it can conne
 
 - **Click any line** to edit it. Enter saves, Shift+Enter adds a line, Esc cancels. Clear a line to delete it.
 - Click **Nothing yet** under an empty heading to write there. Tick checkboxes directly.
-- **More → Edit as text** gives you the whole document as Markdown.
+- **☰ → Edit as text** (☰ is the menu at the top right) gives you the whole document as Markdown.
 - **Undo** reverts the last change, whether you made it or Claude did.
 - **Tell Claude** (the box at the bottom) takes typed instructions, such as "make Actions a table" or "merge the two budget points". These are sent straight away.
-- **Say "Claude, …"** to give an instruction out loud, for example "Claude, swap questions four and five". hark updates as soon as you finish the sentence instead of waiting for the next update, and confirms what it did ("✓ Swapped Q4 and Q5").
+- **Say "Claude, …"** to give an instruction out loud, for example "Claude, swap questions four and five". hark updates as soon as you finish the sentence instead of waiting for the next update, and confirms what it did ("✓ Swapped Q4 and Q5"). Speech recognition sometimes writes the name as "Claw", "Clark" or "Cloud"; at the start of a sentence those count as "Claude" too.
 - **Tidy** has Claude go over the whole document: it keeps only the latest version of anything that was revised, merges repeats and moves things where they belong. You can also say "Claude, tidy this up". In co-writing, hark tidies by itself when you press Stop. A tidy takes 20–60 seconds, and **Undo** puts the previous version back.
 - While you're editing, Claude waits. Its next update applies small anchored changes to the document as it now stands, so your wording isn't reverted.
 - Text Claude has just added or changed is highlighted for about 25 seconds.
 
 ## Starting from an agenda
 
-Use **More → Start from an agenda…** (or `hark --agenda agenda.md`) to start from a plan written beforehand. Paste it or load a file. The format is loose: an optional `# Title`, then one item per bullet or line. Indented lines under an item are notes on it.
+Use **☰ → Start from an agenda…** (or `hark --agenda agenda.md`) to start from a plan written beforehand. Paste it or load a file. The format is loose: an optional `# Title`, then one item per bullet or line. Indented lines under an item are notes on it.
 
 ```md
 # Research backlog ideas
@@ -72,6 +72,15 @@ Use **More → Start from an agenda…** (or `hark --agenda agenda.md`) to start
 - **For grilling**, each item becomes a numbered spec. One Claude call (usually 15–30 seconds) drafts each item's first questions before anyone speaks. It may also suggest a few facts to look up; these appear in the Research panel but don't start until you press **Research this**.
 
 If the current session already has something in it, the agenda starts a new session and the current one is kept.
+
+## Aims, time and "what's left?"
+
+hark can help keep a meeting on course. Give it what the meeting is for and when it ends, and ask it out loud where you've got to.
+
+- **Aims**: in the agenda dialog, list one or two things the meeting must achieve. They become a checklist above the agenda, and Claude ticks each one off once the group has clearly achieved it. In an agenda file, write `Aims: agree the budget split; pick a venue`, or a `## Aims` section of bullets. You can also say "Claude, our aim today is to agree the split."
+- **End time**: set it in the agenda dialog or **☰ → Meeting time…**, or put `Ends: 11:30` in an agenda file. You can also say it: "Claude, we finish at half eleven" or "we've got 15 minutes left". The bar and the room screen count down to it.
+- **Ask about the meeting**: "Claude, what else do we need to cover?", "are we on track?", "what did we decide about travel?", "who's doing the slides?". Claude answers from the notes and the discussion so far in a few sentences. For what's left, it puts aims not yet met first, then agenda items, and says what to prioritise or park if time is short. The answer pops up on the room screen, shows briefly on the page and stays in the Research panel. It isn't added to the document unless you ask.
+- **Reminder near the end** (off unless you tick it): 10 minutes before the end, if any aims or agenda items are still unticked, the room screen shows what's still open. It appears once, and only while hark is listening.
 
 ## Grilling
 
@@ -94,14 +103,77 @@ The method (ask everything that can be answered now, with a recommended answer, 
 
 The panel beside the document (the **Research** tab; on a phone, the **Research** button) runs lookups in the background while you keep talking.
 
-- **Ask out loud**, for example "Claude, can you find the seminal papers on this?", or in **Tell Claude**. Claude spots explicit requests, not every topic that comes up. You can also type a request into **Look something up**.
-- Each request becomes a card. A separate Claude call with web search and page fetching (and no other tools) checks its sources and returns a one-line answer and up to five findings with links. This usually takes 20–60 seconds. At most two run at once.
-- Say it out loud too: "add the Sorrell review to the background" or "put those papers in". Claude adds just what was asked for, and the panel marks it as added.
+- **Ask out loud**, for example "Claude, what's a Ralph Wiggum loop?" or "Claude, can you find the seminal papers on this?", or in **Tell Claude**. Claude spots explicit requests and questions put to it, not every topic that comes up. You can also type a request into **Look something up**.
+- There are two kinds of lookup, and Claude picks one from how you ask:
+  - **Quick look-up**, for an explanation or a fact ("what is…", "how does…", "when did…"). You get two to four plain sentences and the one source it relied on. If Claude answered from its own knowledge without searching, the card says so. **Find sources** runs the fuller kind on the same question.
+  - **Sources**, when you ask for papers, references, reports, evidence or reading. You get a one-line answer and up to five findings with links.
+- Each lookup is a separate Claude call with web search and page fetching (and no other tools). They usually take under a minute, and quick ones are the faster of the two. At most two run at once.
+- On the room screen, a quick answer pops up over the notes long enough to read out, then goes. Click it or press Esc to close it sooner. A very long answer is shortened there, but the panel and exports keep all of it. Requests for sources stay in the panel.
+- Say it out loud too: "add that explanation to the background", "add the Sorrell review" or "put those papers in". Claude adds just what was asked for, and the panel marks it as added.
 - **Add** puts one finding into the document and **Add all to document** puts in the lot. Claude places them where they fit. Nothing from research goes into the document until you add it.
 - Untick **Start right away when someone asks out loud** to have spoken requests wait for you to press **Research this**.
-- Findings are saved with the session, in `research.md`.
+- On Windows, finished results can also go into a PowerPoint deck as slides: see [Adding slides to a PowerPoint deck](#adding-slides-to-a-powerpoint-deck).
+- Everything you looked up stays with the session: **Copy Markdown**, **Download .md** and sharing as a file add a **Research** section after the notes, and the session folder keeps it in `research.md`.
 
-One lookup uses noticeably more of your plan than a document update: roughly as much as 5 to 10 updates.
+A lookup for sources uses noticeably more of your plan than a document update: roughly as much as 5 to 10 updates. A quick look-up should use less, as it searches less.
+
+### Your own documents
+
+Claude can also answer from documents of your own: a project's GitHub repo, transcripts of earlier meetings, a folder of notes. Save each one once as a **collection**:
+
+```sh
+hark --add-corpus mikefsway/societal-immunity --about "transcripts, reading list and notes from the project"
+hark --add-corpus ~/Documents/project-notes
+```
+
+- **A GitHub repo** (`owner/repo` or its github.com link): hark makes its own copy, holding only the latest version. Before a search it fetches any changes from GitHub, if it hasn't checked in the last five minutes, so whatever anyone pushed is included. Private repos work if this computer is signed in to GitHub (`gh auth login`). If GitHub can't be reached, hark searches the copy it has and says so under **☰ → Collections**.
+- **A folder on this computer** is read as it is, so your edits are always included. hark never runs `git pull` in a folder you work in; add the repo by name instead if you want that.
+- From the app, **☰ → Collections** lists your collections with when each was last read, and lets you **Update now**, **Remove** one, or add a GitHub repo, which is handy from a phone. Folders can only be added from the command line, so someone with your link can't point Claude at other folders on your computer.
+- A running hark notices added and removed collections within a few seconds, without a restart.
+- The name is the folder or repo name, or give one with `NAME=FOLDER`. `--about` is optional; it helps Claude tell when a question is about these documents. To use a folder for one run only, start hark with `--corpus FOLDER` (repeatable). `hark --remove-corpus NAME` forgets a collection and deletes hark's copies of it, never your own folder.
+
+- **Choose the collection for the session** in the picker next to **Look something up** (it appears once you have a collection). It's saved with the session, and it's the only collection Claude can search in it, whether you type or speak. Claude isn't told the others exist, so a question can't pull in details from an unrelated repo and put them on a shared screen. With **Web** chosen, no collection is searched.
+- **Ask out loud** and point at your documents: "Claude, what did we decide about the outline in the last catch-up?" or "Claude, check the project notes for which papers we marked as core". A question about the wider world ("Claude, what's the levee effect?") still goes to the web. Typed requests go to the chosen collection.
+- You get a short answer drawn only from the documents (or a plain "they don't cover this") and the files it used. If the folder is a GitHub repo, each file links to it there. **Add** works as for any other finding, and the answer pops up on the room screen like a quick look-up.
+- hark keeps a plain-text copy of each collection in `~/.cache/hark/corpora` (and its GitHub copies in `~/.local/share/hark/repos`). Text and code files are copied as they are; Word (`.docx`), PowerPoint (`.pptx`, with speaker notes) and PDF files are converted to text (PDFs need `pdftotext`, from poppler-utils). Other files are skipped. In a git repo, files your `.gitignore` excludes are left out. The copy is brought up to date before each search, which only re-reads files that changed.
+- Each search is a separate Claude call that can only list, search and read that copy. It has no web access and no other tools, and with your Claude subscription Claude Code's `--restricted` mode keeps it inside the copy. As with web research, only your question and the document's title go with it, not the conversation.
+- A search usually takes 5–15 seconds. Collections need Claude (your subscription, with a recent Claude Code, or an Anthropic API key).
+
+## On a shared screen
+
+When hark is on a TV or projector in the room, or shared into a Teams call, show the **room screen** instead of the document. It's read-only and in large type, and it shows only what the group is on right now:
+
+- **Grilling**: the current item's top open question with its suggested answer ("Say *yes* to accept"), the other open questions, and the spec so far, with "?" for anything not yet settled.
+- **Meeting**: the topic under discussion, with the aims and agenda alongside showing which item you're on, and the time left if an end time is set. New decisions and actions appear in a banner for 45 seconds.
+- **Co-writing** and **Notes**: the section being written, with the outline alongside.
+
+It follows the conversation by itself, moving to whichever part of the document last changed. The transcript, speaker names, working notes and editing controls never appear on it.
+
+- **☰ → Room screen** opens it in a new window. Drag that window onto the projector and press **F** for full screen. In a Teams call, share that window.
+- For a separate device such as a room PC or a smart TV, start hark with `--lan` and open the **Room screen** link it prints.
+- The buttons fade away when the mouse is still.
+
+### Holding a section on screen
+
+You can choose what's on screen yourself. Click a section in the list beside it, use **←** and **→** (or a presentation clicker), or ask out loud: "Claude, let's look at the methods", "show item 3", "put the actions up". Requests that clearly name one section, such as "show the methods", "item 3" or "follow along", switch the screen straight away without waiting for Claude. Vaguer ones, such as "the bit where we talked about tariffs", go to Claude and take a few seconds. If you ask for a section that doesn't exist yet, Claude creates it.
+
+In co-writing and notes, sections are numbered in the room screen's outline and beside their headings in the document. The numbers are for display only and aren't saved in the document. Say "Claude, section 3", "next section" or "previous section" (or "go back a section") to move around. These short commands work without "Claude" too, as long as the sentence is nothing but the command: "Section four." or "Next section." A sentence such as "the next section should cover ants" doesn't move the screen. In grilling, "section 3" means item 3. "Next item" goes to Claude, which marks the current item ready and, if the screen is held, shows the next one. In meetings, where the screen lists the agenda, these go to Claude.
+
+The section then stays on every screen, marked **Held here**, until you press **L** or **Follow live**, say "Claude, follow along", or click **On screen ✕** beside its heading in the document.
+
+While a section is held, Claude treats it as where you're working. Anything that doesn't say where it goes ("add a point about recruitment", "reword that") goes into the held section. In grilling, the held item is the one being discussed. Things that name another place ("put that in the intro") or clearly belong elsewhere (a decision, an action) still go there. The screen stays put, and a note such as "✓ Also changed: Introduction" appears for a few seconds; click it to go there.
+
+### Adding slides to a PowerPoint deck
+
+On Windows, with PowerPoint installed, hark can add slides to a deck you have open, for example the one you're presenting from. The room screen stays as it is; the deck gets only the slides you choose.
+
+- **Link the deck**: **☰ → Link a PowerPoint file…** on the laptop running hark (not on a phone), or start with `hark --pptx path\to\deck.pptx`. The link is saved with the session.
+- **Slide this**: say "Claude, put this on a slide" (or "add that to the deck"), or use **☰ → Slide this** on any device. You get what the room screen shows: an answer that popped up (up to about 30 seconds after it went), otherwise the section on screen. In grilling that's the current question with its suggested answer; in a meeting, the topic with its notes and any decisions that name it. Name a section to slide that instead: "Claude, put the methods on a slide". Requests that clearly name one section are done straight away without a Claude call; vaguer ones go to Claude. Working notes are never put on a slide.
+- **Add to slides** on a finished card in the Research panel adds that card: its title, the answer (shortened), and up to six findings as linked bullets. The card then says *added to slides*, and **Add again** adds another copy.
+- Tick **Add finished results to the linked deck while it's open** to have every finished request for sources, and every answer from your collections, added as it comes in. Quick look-ups and Claude's answers about the meeting are never added by themselves. Results already in the panel aren't added when you tick it.
+- Each slide goes at the end of the deck, using the deck's own layout, with what didn't fit, each finding's note and the original request in the speaker notes. A slide show that's running carries on where it is.
+- hark never saves the deck: the slides stay unsaved until you save, so PowerPoint's **Undo** removes one you didn't want. If the deck isn't open in PowerPoint (or is open read-only), nothing is changed and hark says *deck not open*; open it and try again. A deck kept in OneDrive works too.
+- Elsewhere than Windows, hark shows no slide controls and `--pptx` is ignored.
 
 ## Speakers
 
@@ -129,11 +201,11 @@ If a document is lost or ruined, you can build a fresh one from a transcript:
 hark --rebuild meeting.vtt
 ```
 
-This reads a Teams transcript (in Teams, open the meeting recap, then download the transcript as .vtt) or hark's own `transcript.md`, and has Claude write the document from it in a few large steps. A one-hour meeting takes a few minutes. The result is a new session, so nothing is overwritten; open it with **More → Open a previous session**. Use `--mode` to pick meeting, co-writing or notes. Hand edits aren't in any transcript, so they won't come back; use the versions file for those.
+This reads a Teams transcript (in Teams, open the meeting recap, then download the transcript as .vtt) or hark's own `transcript.md`, and has Claude write the document from it in a few large steps. A one-hour meeting takes a few minutes. The result is a new session, so nothing is overwritten; open it with **☰ → Open a previous session**. Use `--mode` to pick meeting, co-writing or notes. Hand edits aren't in any transcript, so they won't come back; use the versions file for those.
 
-Use **More → Open a previous session** to pick one up again, or **More → New session** to start fresh. Audio is never saved.
+Use **☰ → Open a previous session** to pick one up again, or **☰ → New session** to start fresh. Audio is never saved.
 
-To send the document to someone, use **More → Share…**, which opens your phone's share sheet (WhatsApp, email and so on) with the document as tidy text. **Share as file…** attaches it instead. Downloaded and shared files are named with the date and title, for example `2026-10-23 Budget review with finance.md`. On Android the shared file is a `.txt`, because Chrome won't share `.md` files.
+To send the document to someone, use **☰ → Share…**, which opens your phone's share sheet (WhatsApp, email and so on) with the document as tidy text. **Share as file…** attaches it instead. Downloaded and shared files are named with the date and title, for example `2026-10-23 Budget review with finance.md`. On Android the shared file is a `.txt`, because Chrome won't share `.md` files.
 
 ## Options
 
@@ -146,14 +218,16 @@ To send the document to someone, use **More → Share…**, which opens your pho
 | `--model sonnet` | Model for updates. With Claude, `haiku` is lighter on usage and `opus` is the most careful. With an OpenAI-compatible service, use the name it lists. |
 | `--base-url URL` | The API address, for `--provider openai`. |
 | `--research-model opus` | Claude model for research lookups. The default is the same as `--model`. |
+| `--corpus [NAME=]FOLDER` | Let Claude search a folder of your own documents for this run (see [Your own documents](#your-own-documents)). `--add-corpus FOLDER\|OWNER/REPO` saves a folder or GitHub repo for every run, `--remove-corpus NAME` forgets it. |
 | `--asr parakeet\|moonshine` | Speech model. Parakeet (default) is accurate, adds punctuation and handles 25 European languages. Moonshine is English-only, smaller and faster, for older laptops. |
 | `--lan` | Also serve over HTTPS on your network, for your phone. |
+| `--pptx deck.pptx` | Link a PowerPoint deck to add slides to while it's open (Windows only; see [Adding slides to a PowerPoint deck](#adding-slides-to-a-powerpoint-deck)). |
 | `--replay file.m4a` | Feed a recording through as if it were live. Useful for old recordings or for trying hark out. Needs ffmpeg for formats other than WAV. |
 | `--rebuild file.vtt` | Build a new session from a Teams transcript or a hark `transcript.md`, then exit. |
 | `--port 8765` | Local port. The phone port is this plus one. |
 | `--new-key` | Replace the access key, so old links and signed-in browsers stop working. |
 
-**More → Instructions for Claude** shows the brief Claude follows for the current session. You can rewrite it, for example "this is a supervision meeting; track the student's next steps", and set how often Claude updates. The defaults are every 20 seconds for meetings and every 5 seconds for co-writing.
+**☰ → Instructions for Claude** shows the brief Claude follows for the current session. You can rewrite it, for example "this is a supervision meeting; track the student's next steps", and set how often Claude updates. The defaults are every 20 seconds for meetings and every 5 seconds for co-writing.
 
 ## Choosing the AI service
 
@@ -179,7 +253,7 @@ hark never sees your Claude login. It runs your own copy of Claude Code, unchang
 
 ## Privacy
 
-Audio stays on your machine: voice detection, transcription and speaker matching all run locally. Transcript text and the document go to the AI service you chose: Anthropic for your Claude subscription or an Anthropic key, or the provider you set up otherwise. With a local model (Ollama, LM Studio), nothing leaves your machine except research lookups, which aren't available there anyway.
+Audio stays on your machine: voice detection, transcription and speaker matching all run locally. Transcript text and the document go to the AI service you chose: Anthropic for your Claude subscription or an Anthropic key, or the provider you set up otherwise. With a local model (Ollama, LM Studio), nothing leaves your machine except research lookups, which aren't available there anyway. When you search a collection, the passages Claude reads from it go to Anthropic too, so think before adding a folder of sensitive documents.
 
 **Tell people before you start, and get their agreement.** Recording or transcribing a conversation without consent is against the law in some places and against many organisations' policies, and the transcript and document are personal data. Sessions are saved as plain files in `~/Documents/Hark/`, so delete the ones you don't need.
 

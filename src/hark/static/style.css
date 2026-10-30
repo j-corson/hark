@@ -36,6 +36,8 @@ button { cursor: pointer; border: 0; border-radius: 8px; padding: 7px 12px; back
 button:disabled { opacity: .4; cursor: default; }
 .primary { background: var(--act); color: var(--act-ink); font-weight: 600; }
 .quiet { color: var(--ink); }
+.menubtn { display: inline-flex; align-items: center; padding: 6px 9px; }
+.menubtn svg { display: block; }
 .quiet:hover:not(:disabled), .popover button:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
 :focus-visible { outline: 2px solid var(--act); outline-offset: 2px; }
 select { background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
@@ -55,6 +57,13 @@ select { background: transparent; border: 1px solid var(--line); border-radius: 
 .status.thinking::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--act); margin-right: 7px; animation: pulse 1s ease-in-out infinite; }
 .status.error { color: var(--err); }
 .status.paused { color: var(--ink); }
+.clock { font-size: 14px; white-space: nowrap; color: var(--muted); padding: 4px 8px; }
+.clock.soon { color: var(--ink); font-weight: 600; }
+.clock.over { color: var(--err); }
+.dlg .timing { display: grid; gap: 8px; }
+.dlg .inline input[type=time] { width: auto; margin-left: 6px; }
+.dlg .check { display: flex; gap: 8px; align-items: flex-start; font-size: 15px; }
+.dlg .check input { margin-top: 3px; }
 
 .popover { position: absolute; top: calc(100% + 6px); left: 0; z-index: 20; background: var(--sheet); border: 1px solid var(--line);
   border-radius: 12px; padding: 6px; min-width: 240px; box-shadow: 0 10px 30px color-mix(in srgb, var(--ink) 18%, transparent); display: grid; }
@@ -90,6 +99,8 @@ select { background: transparent; border: 1px solid var(--line); border-radius: 
 .sheet .blk:hover { box-shadow: -10px 0 0 color-mix(in srgb, var(--ink) 6%, transparent), 10px 0 0 color-mix(in srgb, var(--ink) 6%, transparent); background: color-mix(in srgb, var(--ink) 6%, transparent); }
 .sheet .wntoggle { font-size: 14px; font-weight: 600; color: var(--muted); margin-left: 10px; padding: 2px 9px; border: 1px solid var(--line); border-radius: 99px; vertical-align: middle; }
 .sheet .wn { color: var(--muted); font-size: 16px; }
+.sheet h2[data-num]::before { content: attr(data-num); display: inline-block; min-width: 1.3em; color: var(--muted); font-weight: 400; }
+.sheet .stagetag { font-size: 13px; font-weight: 600; color: var(--act); margin-left: 10px; padding: 1px 9px; border: 1px solid currentColor; border-radius: 99px; vertical-align: middle; }
 .sheet .emptysec { color: var(--muted); font-style: italic; font-size: 16px; margin: 2px 0; cursor: text; }
 .sheet .add { display: block; margin-top: 18px; color: var(--muted); font-size: 15px; padding: 4px 0; }
 
@@ -130,6 +141,8 @@ select { background: transparent; border: 1px solid var(--line); border-radius: 
 /* research */
 .ask { display: flex; gap: 6px; }
 .ask input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 8px 11px; background: var(--sheet); }
+.ask select { flex: 0 1 auto; max-width: 40%; min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 8px 6px; background: var(--sheet); color: inherit; font: inherit; font-size: 14px; }
+.ask select[hidden] { display: none; }
 .autores { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); margin: 8px 2px 10px; }
 .autores input { accent-color: var(--act); margin: 0; }
 .research { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
@@ -143,11 +156,19 @@ select { background: transparent; border: 1px solid var(--line); border-radius: 
 .rcard.running .rmeta::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--act); margin-right: 6px; animation: pulse 1s ease-in-out infinite; }
 .rcard.error .rmeta { color: var(--err); }
 .ranswer { margin: 8px 0 4px; }
+.ranswer.quick { font-size: 16px; }
+.rsource { margin: 4px 0 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.rsource a { color: var(--act); text-decoration: none; }
+.rsource a:hover { text-decoration: underline; }
+.rslide { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+.rslide.note { font-style: italic; }
+.autores .deck { color: var(--muted); overflow-wrap: anywhere; }
 .ritems { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 8px; }
 .ritems li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: start; }
 .ritems .t { font-weight: 600; overflow-wrap: anywhere; }
 .ritems .t a { color: var(--act); text-decoration: none; }
 .ritems .t a:hover { text-decoration: underline; }
+.ritems .t .p { display: block; font-weight: 400; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .ritems .n { grid-column: 1; color: var(--muted); font-size: 14px; }
 .ritems button, .ractions button { font-size: 13px; padding: 4px 9px; border: 1px solid var(--line); }
 .ritems button { grid-column: 2; grid-row: 1 / span 2; }
@@ -187,6 +208,14 @@ dialog::backdrop { background: color-mix(in srgb, #000 40%, transparent); }
 .dlg .inline select { display: block; width: 100%; margin-top: 4px; border: 1px solid var(--line); border-radius: 6px; padding: 6px; background: var(--sheet); }
 .dlg .inline.file input { width: auto; max-width: 100%; border: 0; padding: 0; }
 .dlg .row { display: flex; justify-content: flex-end; gap: 8px; }
+.corplist { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.corplist li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.corplist .n { font-weight: 700; }
+.corplist .m { grid-column: 1; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.corplist .m.bad { color: var(--err); }
+.corplist .b { grid-column: 2; grid-row: 1 / span 3; display: flex; gap: 6px; }
+.corplist .b button { font-size: 13px; padding: 4px 9px; border: 1px solid var(--line); }
+.dlg .inline input#corpSpec, .dlg .inline input#corpAbout { display: block; width: 100%; margin-top: 4px; padding: 7px 9px; }
 .sesslist { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow-y: auto; }
 .sesslist button { width: 100%; text-align: left; display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; }
 .sesslist button:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
@@ -194,7 +223,7 @@ dialog::backdrop { background: color-mix(in srgb, #000 40%, transparent); }
 .sesslist .cur { font-weight: 700; }
 
 .toast { position: fixed; left: 50%; bottom: 80px; transform: translateX(-50%); background: var(--ink); color: var(--sheet); padding: 10px 16px;
-  border-radius: 10px; font-size: 15px; max-width: calc(100vw - 32px); z-index: 50; }
+  border-radius: 10px; font-size: 15px; max-width: min(36em, calc(100vw - 32px)); z-index: 50; cursor: default; }
 
 /* phone */
 @media (max-width: 820px) {
