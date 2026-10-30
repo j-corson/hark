@@ -15,11 +15,12 @@ import re
 import subprocess
 import time
 import wave
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 
-from . import agenda, timing
+from . import agenda, issues, timing
 from .docops import apply_ops, changed_lines, find_heading, rename_in_doc
 from .engine import SR, AudioStream, Engine
 from .research import KINDS, Researcher, clean, clean_url, clip, guess_kind
@@ -88,7 +89,8 @@ def said(text: str, line: dict) -> str:
 
 
 class Hub:
-    def __init__(self, engine: Engine, scribe: Scribe, data_dir: Path, threshold: float = 0.40, researcher: Researcher | None = None):
+    def __init__(self, engine: Engine, scribe: Scribe, data_dir: Path, threshold: float = 0.40, researcher: Researcher | None = None,
+                 gh: issues.GhRunner | None = None):
         self.engine = engine
         self.scribe = scribe
         self.researcher = researcher or Researcher(scribe)
@@ -108,7 +110,11 @@ class Hub:
         self.tidy_at = 0.0  # earliest time a "stop" tidy may start
         self.held_tidy: tuple | None = None  # tidied document waiting for someone to finish editing
         self.tidied: tuple[str, int] | None = None  # (session id, version) right after the last tidy
-        self.prep: tuple[Session, str] | None = None  # (session, agenda) for Claude to lay out with first questions
+        self.prep: tuple | None = None  # (session, agenda, aims, issues) for Claude to lay out with first questions
+        self.prep_items: list[tuple[Session, list]] = []  # issues added mid-session: (session, [(section as added, issue)])
+        self.gh = gh  # the GitHub CLI, for issues in grilling
+        self.gh_ok = False  # ...installed and logged in (see check_issues)
+        self.issues_repo: str | None = None  # the last repo issues were picked from (config.json), read once
         self.last_call = 0.0
         self.retry_at = 0.0
         self.claude = {"state": "idle", "detail": "" if scribe.available else getattr(scribe, "problem", "") or "no model available"}
@@ -146,7 +152,7 @@ class Hub:
 
     async def push_state(self, ws=None) -> None:
         msg = {"type": "state", "session": self.session.public(), "sessions": list_sessions(self.data_dir), "stage": self.session.stage,
-               "sections": screen_sections(self.session.doc, self.session.mode)}
+               "sections": screen_sections(self.session.doc, self.session.mode), "issues": self.issues_public(self.session)}
         if ws is None:
             await self.broadcast(msg)
         else:
@@ -160,7 +166,7 @@ class Hub:
         s.stage = find_heading(s.doc, s.stage)
         await self.broadcast({"type": "doc", "doc": s.doc, "version": s.version, "changed": changed or [],
                               "by": by, "can_undo": bool(s.history), "title": s.title, "stage": s.stage,
-                              "sections": screen_sections(s.doc, s.mode)})
+                              "sections": screen_sections(s.doc, s.mode), "issues": self.issues_public(s)})
 
     async def _screen_request(self, s: Session, line: dict) -> None:
         """Switch the room screen straight away for a clear "Claude, show the methods", with no Claude call.
@@ -269,6 +275,8 @@ class Hub:
             await self._segments(st, st.flush())
             if self.session.mode == "outline" and not self.listening and not self.tidy_wanted:
                 self.tidy_wanted, self.tidy_at = "stop", time.time() + 3
+            if not self.listening:
+                await self._offer_updates(ws, self.session)
         await self.push_status()
 
     async def replay(self, path: str, speed: float = 1.0) -> None:
@@ -301,7 +309,7 @@ class Hub:
                 await self._watch_corpora()
                 await self._time_check()
                 if self._prep_due():
-                    await self._prepare()
+                    await (self._prepare() if self.prep else self._prepare_items())
                 elif self._due():
                     await self._update()
                 elif self._tidy_due():
@@ -438,13 +446,14 @@ class Hub:
 
     # -- starting from an agenda ---------------------------------------------
     async def load_agenda(self, text: str, mode: str | None = None, aims: list | None = None, ends: str = "",
-                          nudge: bool | None = None) -> bool:
+                          nudge: bool | None = None, issues: list[dict] | None = None) -> bool:
         """Start the document from an agenda. A session that already has content is kept, and a new one started.
-        Aims and an end time can come in the agenda text ("Aims: ...", "Ends: 11:30") or separately (the dialog)."""
+        Aims and an end time can come in the agenda text ("Aims: ...", "Ends: 11:30") or separately (the dialog).
+        In grilling, GitHub issues (from fetch_issues) join the agenda as items."""
         text, more_aims, said_ends = agenda.plan((text or "").strip()[:agenda.MAX_CHARS])
         aims = [str(a).strip()[:300] for a in (aims or []) if str(a).strip()][:10] + more_aims
         _title, _context, items = agenda.parse(text)
-        if not items and not aims:
+        if not items and not aims and not issues:
             return False
         at = timing.parse_clock(ends, exact=True) if ends else timing.parse_clock(said_ends) if said_ends else None
         s = self.session
@@ -454,20 +463,21 @@ class Hub:
             s = self._switch(Session(self.data_dir, mode=mode, threshold=self.threshold))
         else:
             s.set_mode(mode)
-        s.set_doc(agenda.layout(text, s.mode, aims), by="agenda")
+        issues = (issues or []) if s.mode == "grill" else []
+        s.set_doc(agenda.layout(text, s.mode, aims, issues), by="agenda")
         if at or nudge is not None:
             s.set_ends(at or s.ends, nudge)
-        if s.mode == "grill" and self.scribe.available and items:
-            self.prep = (s, text, aims)
+        if s.mode == "grill" and self.scribe.available and (items or issues):
+            self.prep = (s, text, aims, issues)
         s.save()
         await self.push_state()
         return True
 
     def _prep_due(self) -> bool:
-        return bool(self.prep) and not self.busy and not self.held and not self.held_tidy and self.scribe.available
+        return bool(self.prep or self.prep_items) and not self.busy and not self.held and not self.held_tidy and self.scribe.available
 
     async def _prepare(self) -> None:
-        s, text, aims = self.prep
+        s, text, aims, new_issues = self.prep
         self.prep = None
         if s is not self.session:
             return
@@ -476,7 +486,7 @@ class Hub:
         await self.push_status()
         base = s.doc
         try:
-            data, took = await self.scribe.prepare(agenda.build_prep_prompt(s.brief, text, aims))
+            data, took = await self.scribe.prepare(agenda.build_prep_prompt(s.brief, text, aims, new_issues, s.doc))
         except ScribeError as e:
             self.claude = {"state": "error", "detail": f"couldn't prepare the questions: {e}"}
             log.warning("prepare: %s", e)
@@ -485,7 +495,7 @@ class Hub:
             self.busy = False
             self.last_call = time.time()
             await self.push_status()
-        doc = str(data.get("document") or "").strip()
+        doc = issues.keep_issue_fields(base, str(data.get("document") or "").strip())
         if not doc.startswith("#") or len(doc) < 0.8 * len(base.strip()):
             self.claude = {"state": "error", "detail": "the prepared questions came back incomplete, so the agenda was left as it was"}
             await self.push_status()
@@ -504,11 +514,65 @@ class Hub:
         await self._requested_research(s, data.get("research") or [], state="proposed", origin="agenda")
         await self.push_status()
 
+    async def _prepare_items(self) -> None:
+        """Prep items added mid-session (GitHub issues). Only those items change, and only if nobody has touched them since."""
+        s, new = self.prep_items.pop(0)
+        if s is not self.session:
+            return
+        self.busy = True
+        self.claude = {"state": "preparing", "detail": "new items"}
+        await self.push_status()
+        try:
+            data, took = await self.scribe.prepare_items(agenda.build_item_prep_prompt(s.brief, s.doc, new))
+        except ScribeError as e:
+            self.claude = {"state": "error", "detail": f"couldn't prepare the new items: {e}"}
+            log.warning("prepare items: %s", e)
+            return
+        finally:
+            self.busy = False
+            self.last_call = time.time()
+            await self.push_status()
+        while self.editing and s is self.session:
+            await asyncio.sleep(0.5)
+        if s is not self.session:
+            return
+        added = {issue["ref"]: section for section, issue in new}
+        base = doc = s.doc
+        kept = 0
+        for it in data.get("items") or []:
+            ref = str(it.get("ref") or "").strip() if isinstance(it, dict) else ""
+            section = str(it.get("section") or "").strip() if isinstance(it, dict) else ""
+            head = issues.issue_items(doc).get(ref)
+            if ref not in added or not head or not section.startswith("###"):
+                continue
+            now = issues.item_section(doc, head)
+            if issues.changed(added[ref], now):
+                kept += 1  # changed by hand or by Claude meanwhile: keep that
+                continue
+            lines = section.split("\n")
+            num = re.match(r"^###\s+(\d+[.)])\s*", head)
+            title = re.sub(r"^#+\s+(\d+[.)]\s*)?", "", lines[0]).strip()
+            lines[0] = f"### {num.group(1)} {title}" if num and title else head  # keep the number it was given
+            section = "\n".join(lines)
+            if ref not in issues.issue_items(section):
+                section = issues.keep_issue_fields(now, section)
+            doc = doc.replace(now, section, 1)
+        if s.set_doc(doc, by="claude"):
+            await self.push_doc(changed_lines(base, s.doc), by="claude")
+            summary = str(data.get("summary") or "").strip().rstrip(".")[:120]
+            await self.broadcast({"type": "toast", "text": f"✓ Ready to grill{': ' + summary if summary else ''}."})
+        elif kept:
+            await self.broadcast({"type": "toast", "text": "The new items changed while Claude was drafting questions, so it kept your version."})
+        self.claude = {"state": "idle", "detail": f"prepared in {took:.0f}s"}
+        await self._requested_research(s, data.get("research") or [], state="proposed", origin="agenda")
+        await self.push_status()
+
     def _switch(self, s: Session) -> Session:
         self.session = s
         self.held = None
         self.held_tidy, self.tidy_wanted = None, None
         self.prep = None
+        self.prep_items = []
         return s
 
     # -- tidying up ---------------------------------------------------------
@@ -568,7 +632,7 @@ class Hub:
         self.claude = {"state": "idle", "detail": f"tidied in {took:.0f}s"}
         if s.doc != base:
             await self.broadcast({"type": "toast", "text": "The document changed while Claude was tidying, so it left it alone. Press Tidy to try again."})
-        elif s.set_doc(doc, by="tidy"):
+        elif s.set_doc(issues.keep_issue_fields(base, doc), by="tidy"):
             self.tidied = (s.id, s.version)
             await self.push_doc(by="tidy")
             await self.broadcast({"type": "toast", "text": f"✓ Tidied{': ' + summary.rstrip('.') if summary else ''}. Undo puts it back."})
@@ -595,6 +659,7 @@ class Hub:
         ops = [o for o in (data.get("ops") or []) if isinstance(o, dict)]
         old = s.doc
         new, failed = apply_ops(old, ops, base)
+        new = issues.keep_issue_fields(old, new)  # an issue item stays linked to its issue
         s.processed = max(s.processed, upto)
         renamed = False
         for label, name in speaker_pairs(data.get("speaker_names")):
@@ -821,6 +886,163 @@ class Hub:
             await say(str(e)[:300])
         await self.push_status()
 
+    # -- GitHub issues ------------------------------------------------------
+    async def check_issues(self, announce: bool = False) -> bool:
+        """Whether GitHub issues can be used: `gh` is installed and logged in. Checked once, at start."""
+        self.gh_ok = bool(self.gh) and await self.gh.available()
+        if announce and self.gh_ok:
+            await self.push_state()
+        return self.gh_ok
+
+    def issues_public(self, s: Session) -> dict:
+        """What the page needs: whether issues work, the last repo, and each issue item's post state."""
+        from . import config
+
+        items = {}
+        for ref, head in issues.issue_items(s.doc).items():
+            posted = s.issues.get(ref) or {}
+            posts = posted.get("posts") or []
+            items[ref] = {"heading": head, "changed": issues.changed(posted.get("snapshot"), issues.item_section(s.doc, head)),
+                          "url": posts[-1]["url"] if posts else "", "posts": len(posts)}
+        if self.issues_repo is None:
+            self.issues_repo = config.issue_settings()["repo"]
+        return {"available": self.gh_ok, "repo": self.issues_repo, "items": items}
+
+    async def fetch_issues(self, refs: list[str], default_repo: str = "") -> tuple[list[dict], list[str]]:
+        """Look issues up with `gh`: ([{"ref", "title", "body", "url", "state"}], problems to show). Each issue once."""
+        from . import config
+
+        found, errors, seen = [], [], set()
+        for text in refs:
+            parsed = issues.parse_ref(str(text), default_repo or None)
+            if not parsed:
+                errors.append(f"{str(text)[:80]!r} isn't a GitHub issue. Write it as #12, owner/repo#12 or its link.")
+                continue
+            ref = issues.ref_str(*parsed)
+            if ref in seen:
+                continue
+            seen.add(ref)
+            try:
+                found.append({"ref": ref, **await self.gh.view(*parsed)})
+            except issues.GhError as e:
+                errors.append(f"Couldn't get {ref}: {e}")
+        if default_repo and issues.REPO.match(default_repo) and found:
+            self.issues_repo = default_repo
+            await asyncio.to_thread(config.save_issues_repo, default_repo)
+        return found, errors
+
+    async def add_issues(self, ws, refs: list[str], default_repo: str = "") -> None:
+        """Add issues to a grilling session under way: new items at the end of Items, prepped on their own."""
+        s = self.session
+        say = lambda text: self.send(ws, {"type": "toast", "text": text})
+        if s.mode != "grill":
+            await say("Issues can be added in Grilling mode only.")
+            return
+        have = issues.issue_items(s.doc)
+        fresh, dupes = [], []
+        for text in refs:
+            parsed = issues.parse_ref(str(text), default_repo or None)
+            ref = issues.ref_str(*parsed) if parsed else str(text)
+            (dupes if ref in have else fresh).append(ref)
+        if dupes:
+            await say(f"{', '.join(dupes)} {'is' if len(dupes) == 1 else 'are'} already in this session.")
+        found, errors = await self.fetch_issues(fresh, default_repo)
+        for e in errors:
+            await say(e)
+        if not found or s is not self.session:
+            return
+        n = agenda.next_item_number(s.doc)
+        new = [(agenda.issue_item(n + i, issue), issue) for i, issue in enumerate(found)]
+        if s.set_doc(agenda.append_items(s.doc, [section for section, _ in new]), by="issues"):
+            await self.push_doc()
+            await say(f"Added {len(new)} issue{'s' * (len(new) != 1)}" + (": Claude is drafting first questions." if self.scribe.available else "."))
+        if self.scribe.available:
+            self.prep_items.append((s, new))
+
+    def _session_by_id(self, sid) -> Session | None:
+        """The session to post from: the current one, or one just left (it was saved when it was left)."""
+        if not sid or sid == self.session.id:
+            return self.session
+        if not self._saved_session(sid):
+            return None
+        return Session.load(self.data_dir, sid, self.threshold)
+
+    def _comment(self, s: Session, ref: str) -> dict | None:
+        from . import config
+
+        head = issues.issue_items(s.doc).get(ref)
+        if not head:
+            return None
+        posted = s.issues.get(ref) or {}
+        section = issues.item_section(s.doc, head)
+        d = datetime.fromtimestamp(s.created)
+        body = issues.comment_body(s.doc, head, s.title, f"{d.day} {d:%b %Y}", posted.get("snapshot"), config.issue_settings()["disclaimer"])
+        return {"ref": ref, "heading": head, "body": body, "note": issues.readiness(section) or "",
+                "changed": issues.changed(posted.get("snapshot"), section), "snapshot": section}
+
+    async def _post(self, s: Session, ref: str, body: str, snapshot=None) -> dict:
+        """Post one comment. {"ref", "url"} or {"ref", "error"}; nothing is recorded unless gh says it worked.
+        `snapshot` is the item as it was when its preview was made, so later edits still count as new."""
+        head = issues.issue_items(s.doc).get(ref)
+        parsed = issues.parse_ref(ref)
+        if not head or not parsed:
+            return {"ref": ref, "error": "That item no longer has an Issue field, so it isn't linked to an issue."}
+        if not self.gh_ok:
+            return {"ref": ref, "error": issues.GH_NEEDED + "."}
+        if not body.strip():
+            return {"ref": ref, "error": "The comment is empty."}
+        try:
+            url = await self.gh.comment(*parsed, body)
+        except issues.GhError as e:
+            return {"ref": ref, "error": str(e)}
+        s.record_post(ref, url, snapshot if isinstance(snapshot, str) and snapshot.strip() else issues.item_section(s.doc, head))
+        s.save()
+        return {"ref": ref, "url": url}
+
+    async def _offer_updates(self, ws, s: Session) -> None:
+        """On Stop, or on leaving a session: offer to post the issue items that changed since their last post."""
+        if not self.gh_ok:
+            return
+        items = [c for ref in issues.offer(s.doc, s.issues) if (c := self._comment(s, ref))]
+        if items:
+            await self.send(ws, {"type": "issues_offer", "session": s.id, "title": s.title, "items": items})
+
+    async def _issues_msg(self, ws, kind: str, msg: dict) -> None:
+        if not self.gh_ok:
+            await self.send(ws, {"type": "toast", "text": issues.GH_NEEDED + "."})
+            return
+        if kind == "issues_list":
+            repo = str(msg.get("repo") or "").strip()
+            if not issues.REPO.match(repo):
+                await self.send(ws, {"type": "issues_list", "repo": repo, "items": [], "error": "Write the repo as owner/repo."})
+                return
+            try:
+                rows = await self.gh.list_open(repo)
+                await self.send(ws, {"type": "issues_list", "repo": repo, "items": rows})
+            except issues.GhError as e:
+                await self.send(ws, {"type": "issues_list", "repo": repo, "items": [], "error": str(e)})
+        elif kind == "issues_add":
+            refs = msg.get("refs") if isinstance(msg.get("refs"), list) else []
+            await self.add_issues(ws, [str(r) for r in refs[:50]], str(msg.get("repo") or "").strip())
+        elif kind == "issue_preview":
+            c = self._comment(self.session, str(msg.get("ref") or ""))
+            await self.send(ws, {"type": "issue_preview", **c} if c else
+                            {"type": "issue_error", "ref": msg.get("ref"), "error": "That item isn't linked to an issue any more."})
+        elif kind == "issue_post":
+            s = self._session_by_id(msg.get("session"))
+            r = await self._post(s, str(msg.get("ref") or ""), str(msg.get("body") or ""), msg.get("snapshot")) if s else {"ref": msg.get("ref"), "error": "That session wasn't found."}
+            await self.send(ws, {"type": "issue_error" if "error" in r else "issue_posted", **r})
+            if s is self.session and "url" in r:
+                await self.broadcast({"type": "issues", "issues": self.issues_public(s)})
+        elif kind == "issues_post_many":
+            s = self._session_by_id(msg.get("session"))
+            posts = [p for p in msg.get("posts") or [] if isinstance(p, dict)] if isinstance(msg.get("posts"), list) else []
+            results = [await self._post(s, str(p.get("ref") or ""), str(p.get("body") or ""), p.get("snapshot")) for p in posts] if s else []
+            if posts:
+                await self.send(ws, {"type": "issues_posted", "results": results})
+            if s is self.session and any("url" in r for r in results):
+                await self.broadcast({"type": "issues", "issues": self.issues_public(s)})
+
     # -- messages from the page --------------------------------------------
     async def handle(self, ws, msg: dict) -> None:
         s = self.session
@@ -875,6 +1097,8 @@ class Hub:
             await self._research_msg(kind, msg)
         elif isinstance(kind, str) and kind.startswith("corpus_"):
             await self._corpus_msg(ws, kind, msg)
+        elif isinstance(kind, str) and kind.startswith("issue"):
+            await self._issues_msg(ws, kind, msg)
         elif kind == "rename":
             was = s.speakers.name(msg.get("id", ""))
             sid = s.speakers.rename(msg.get("id", ""), msg.get("name", ""))
@@ -905,11 +1129,20 @@ class Hub:
             s.save()
             self._switch(Session(self.data_dir, mode=msg.get("mode") or s.mode, threshold=self.threshold))
             await self.push_state()
+            await self._offer_updates(ws, s)
         elif kind == "agenda":
             aims = msg.get("aims") if isinstance(msg.get("aims"), list) else None
             nudge = msg.get("nudge") if isinstance(msg.get("nudge"), bool) else None
-            if not await self.load_agenda(str(msg.get("text") or ""), msg.get("mode"), aims, str(msg.get("ends") or ""), nudge):
+            found = []
+            refs = [str(r) for r in msg.get("issues") or [] if isinstance(r, (str, int))] if isinstance(msg.get("issues"), list) else []
+            if refs and msg.get("mode") == "grill" and self.gh_ok:
+                found, errors = await self.fetch_issues(refs, str(msg.get("repo") or ""))
+                for e in errors:
+                    await self.send(ws, {"type": "toast", "text": e})
+            if not await self.load_agenda(str(msg.get("text") or ""), msg.get("mode"), aims, str(msg.get("ends") or ""), nudge, found):
                 await self.send(ws, {"type": "toast", "text": "No agenda items or aims found. Put one item per line or bullet."})
+            elif self.session is not s:
+                await self._offer_updates(ws, s)
         elif kind == "timing":
             ends = str(msg.get("ends") or "").strip()
             at = timing.parse_clock(ends, exact=True) if ends else None
@@ -921,10 +1154,16 @@ class Hub:
             await self.push_state()
         elif kind == "open_session":
             sid = msg.get("id", "")
-            if sid and (self.data_dir / sid / "session.json").exists() and "/" not in sid and "\\" not in sid and ".." not in sid:
+            if self._saved_session(sid):
                 s.save()
                 self._switch(Session.load(self.data_dir, sid, self.threshold))
                 await self.push_state()
+                await self._offer_updates(ws, s)
+
+    def _saved_session(self, sid) -> bool:
+        """`sid` names a saved session in the data folder (and nothing outside it)."""
+        return (isinstance(sid, str) and bool(sid) and "/" not in sid and "\\" not in sid and ".." not in sid
+                and (self.data_dir / sid / "session.json").exists())
 
     async def _edit_lines(self, ws, msg: dict) -> None:
         """Replace a block of lines the user edited in place."""

@@ -12,6 +12,8 @@
     research: [], unseen: new Set(), tab: "research", view: "doc", notesOpen: false,
     stage: null, // heading held on the room screen; Claude puts new points there
     sections: [], // the room screen's sections, in order; in co-writing and notes their numbers show beside the headings
+    issues: { available: false, repo: "", items: {} }, // GitHub issues in grilling: is gh there, the last repo, each issue item's post state
+    agendaIssues: [], agendaRepo: "", // issues picked in the agenda dialog
   };
   const narrow = window.matchMedia("(max-width: 820px)");
 
@@ -43,7 +45,8 @@
       $("undoBtn").disabled = !m.session.can_undo;
       st.research = m.session.research || []; st.unseen.clear();
       $("autoRes").checked = !!m.session.research_auto;
-      setPicker(); renderClock();
+      if (m.issues) st.issues = m.issues;
+      setPicker(); renderClock(); renderIssueControls();
       renderDoc(); renderTranscript(); renderSpeakers(); renderTitle(m.session.title); renderResearch();
     } else if (m.type === "research") {
       const i = st.research.findIndex((j) => j.id === m.job.id);
@@ -64,6 +67,7 @@
       st.doc = m.doc; st.version = m.version;
       if ("stage" in m) st.stage = m.stage || null;
       if (m.sections) st.sections = m.sections;
+      if (m.issues) st.issues = m.issues;
       $("undoBtn").disabled = !m.can_undo;
       renderTitle(m.title);
       renderDoc(m.by === "claude");
@@ -80,6 +84,22 @@
       if ($("corpDlg").open) renderCorpList();
     } else if (m.type === "toast") {
       toast(m.text);
+    } else if (m.type === "issues") {
+      st.issues = m.issues; renderIssueControls(); renderDoc(false);
+    } else if (m.type === "issues_list") {
+      showIssueList(m);
+    } else if (m.type === "issue_preview") {
+      openPost(m);
+    } else if (m.type === "issue_posted") {
+      if ($("postDlg").open && st.postRef === m.ref) $("postDlg").close();
+      toast(`✓ Posted to ${m.ref}.`);
+    } else if (m.type === "issue_error") {
+      if ($("postDlg").open && st.postRef === m.ref) showPostError(m.error);
+      else toast(`${m.ref}: ${m.error}`, 10000);
+    } else if (m.type === "issues_offer") {
+      openOffer(m);
+    } else if (m.type === "issues_posted") {
+      offerPosted(m.results || []);
     }
   }
 
@@ -127,6 +147,22 @@
         tag.title = "The room screen is held on this section, and Claude puts new points here. Click to let it follow the conversation again.";
         node.appendChild(tag);
       }
+      const issue = b.kind === "h" && st.issues.available && st.session && st.session.mode === "grill" ? issueAt(lines[b.start].trim()) : null;
+      if (issue) {
+        const [ref, it] = issue;
+        const btn = document.createElement("button");
+        btn.type = "button"; btn.className = "quiet issuebtn"; btn.dataset.ref = ref;
+        btn.disabled = !it.changed;
+        btn.textContent = it.changed ? "Post to issue" : "Nothing new to post";
+        btn.title = it.changed ? `Preview a comment for ${ref} with this item's spec` : `Nothing has changed since the last post to ${ref}`;
+        node.appendChild(btn);
+        if (it.url) {
+          const a = document.createElement("a");
+          a.className = "issuelink"; a.href = it.url; a.target = "_blank"; a.rel = "noopener";
+          a.textContent = it.posts > 1 ? `last post (${it.posts})` : "posted";
+          node.appendChild(a);
+        }
+      }
       if (idx === wn && wnEnd > wn + 1) {
         const n = bl.slice(wn + 1, wnEnd).filter((x) => x.kind === "li").length;
         const tg = document.createElement("button");
@@ -169,6 +205,8 @@
     if (e.target.closest("a")) return;
     if (e.target.closest(".wntoggle")) { st.notesOpen = !st.notesOpen; renderDoc(false); return; }
     if (e.target.closest(".stagetag")) { send({ type: "stage", heading: null }); return; }
+    const ib = e.target.closest(".issuebtn");
+    if (ib) { if (!ib.disabled) send({ type: "issue_preview", ref: ib.dataset.ref }); return; }
     const box = e.target.closest("input[type=checkbox]");
     const blk = e.target.closest("[data-start]");
     if (!blk || st.editing) return;
@@ -492,7 +530,10 @@
       $("agendaFile").value = "";
       $("agendaEnds").value = st.session && st.session.ends ? hhmm(st.session.ends) : "";
       $("agendaNudge").checked = !!(st.session && st.session.nudge);
+      st.agendaIssues = []; renderAgendaIssues();
       $("agendaDlg").showModal();
+    } else if (act === "issues") {
+      openPicker(true, (refs, repo) => send({ type: "issues_add", refs, repo }));
     } else if (act === "timing") {
       openTiming();
     } else if (act === "corpora") {
@@ -513,11 +554,123 @@
     if ($("agendaDlg").returnValue !== "ok") return;
     const text = $("agendaText").value.trim();
     const aims = $("agendaAims").value.split("\n").map((a) => a.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "").trim()).filter(Boolean);
-    if (!text && !aims.length) { toast("The agenda was empty, so nothing changed."); return; }
-    send({ type: "agenda", text, mode: $("agendaMode").value, aims, ends: $("agendaEnds").value, nudge: $("agendaNudge").checked });
+    const grill = $("agendaMode").value === "grill" && st.issues.available;
+    const issues = grill ? st.agendaIssues : [];
+    if (!text && !aims.length && !issues.length) { toast("The agenda was empty, so nothing changed."); return; }
+    send({ type: "agenda", text, mode: $("agendaMode").value, aims, ends: $("agendaEnds").value, nudge: $("agendaNudge").checked,
+           issues, repo: st.agendaRepo });
     st.fresh.clear();
-    $("agendaText").value = ""; $("agendaAims").value = "";
+    $("agendaText").value = ""; $("agendaAims").value = ""; st.agendaIssues = [];
   });
+  $("agendaMode").onchange = renderAgendaIssues;
+  $("agendaIssueBtn").onclick = () => openPicker(false, (refs, repo) => {
+    st.agendaIssues = [...new Set([...st.agendaIssues, ...refs])]; st.agendaRepo = repo; renderAgendaIssues();
+  });
+
+  // ---------------------------------------------------------------- GitHub issues (grilling, through the gh command)
+  function issueAt(heading) {
+    for (const [ref, it] of Object.entries(st.issues.items || {})) if (it.heading === heading) return [ref, it];
+    return null;
+  }
+  // Every issue control shows only in Grilling, and only when gh is installed and logged in.
+  function renderIssueControls() {
+    $("issuesAct").hidden = !(st.issues.available && st.session && st.session.mode === "grill");
+    renderAgendaIssues();
+  }
+  function renderAgendaIssues() {
+    $("agendaIssues").hidden = !(st.issues.available && $("agendaMode").value === "grill");
+    $("agendaIssueList").textContent = st.agendaIssues.length ? st.agendaIssues.join(", ") : "none";
+  }
+  let pickerDone = null, pickerRows = [], pickerMid = false;
+  function openPicker(mid, done) {
+    pickerDone = done; pickerMid = mid; pickerRows = [];
+    $("issueRepo").value = st.issues.repo || "";
+    $("issueRefs").value = ""; $("issueFilter").value = ""; $("issueFilter").hidden = true;
+    $("issueList").innerHTML = ""; $("issueMsg").textContent = "";
+    $("issueDlg").showModal();
+    if ($("issueRepo").value) loadIssues(); else $("issueRepo").focus();
+  }
+  function loadIssues() {
+    const repo = $("issueRepo").value.trim();
+    if (!repo) { $("issueRepo").focus(); return; }
+    $("issueMsg").textContent = `Getting the open issues of ${repo}…`;
+    send({ type: "issues_list", repo });
+  }
+  function showIssueList(m) {
+    if (!$("issueDlg").open || m.repo !== $("issueRepo").value.trim()) return;
+    pickerRows = m.items || [];
+    $("issueMsg").textContent = m.error ? m.error : pickerRows.length ? "" : `${m.repo} has no open issues.`;
+    $("issueFilter").hidden = !pickerRows.length;
+    renderIssueList();
+  }
+  function renderIssueList() {
+    const repo = $("issueRepo").value.trim(), q = $("issueFilter").value.trim().toLowerCase();
+    const ticked = new Set([...$("issueList").querySelectorAll("input:checked")].map((b) => b.value));
+    $("issueList").innerHTML = pickerRows.filter((r) => !q || r.title.toLowerCase().includes(q)).map((r) => {
+      const ref = `${repo}#${r.number}`, have = pickerMid && st.issues.items && st.issues.items[ref];
+      return `<li><label><input type="checkbox" value="${esc(ref)}"${ticked.has(ref) ? " checked" : ""}${have ? " disabled" : ""}>` +
+        `<span>#${r.number} ${esc(r.title)}${r.labels.map((l) => `<span class="lbl">${esc(l)}</span>`).join("")}` +
+        `${have ? ' <span class="in">in this session</span>' : ""}</span></label></li>`;
+    }).join("");
+  }
+  $("issueLoad").onclick = loadIssues;
+  $("issueRepo").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); loadIssues(); } });
+  $("issueFilter").addEventListener("input", renderIssueList);
+  $("issueRefs").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("issueDlg").close("ok"); } });
+  $("issueFilter").addEventListener("keydown", (e) => { if (e.key === "Enter") e.preventDefault(); });
+  $("issueDlg").addEventListener("close", () => {
+    if ($("issueDlg").returnValue !== "ok" || !pickerDone) return;
+    const refs = [...$("issueList").querySelectorAll("input:checked")].map((b) => b.value)
+      .concat($("issueRefs").value.split(/[\s,]+/).filter(Boolean));
+    if (refs.length) pickerDone([...new Set(refs)], $("issueRepo").value.trim());
+    pickerDone = null;
+  });
+  // Post one item to its issue: an editable preview, sent only on Post.
+  function openPost(m) {
+    st.postRef = m.ref; st.postSnapshot = m.snapshot;
+    $("postTitle").textContent = `Post to ${m.ref}`;
+    $("postNote").textContent = m.note || ""; $("postNote").hidden = !m.note;
+    $("postBody").value = m.body;
+    $("postErr").hidden = true; $("postGo").disabled = false; $("postGo").textContent = "Post";
+    if (!$("postDlg").open) $("postDlg").showModal();
+  }
+  function showPostError(text) {
+    $("postErr").textContent = `Nothing was posted: ${text}`; $("postErr").hidden = false;
+    $("postGo").disabled = false; $("postGo").textContent = "Post";
+  }
+  $("postGo").onclick = () => {
+    const body = $("postBody").value.trim();
+    if (!body) { showPostError("the comment is empty."); return; }
+    $("postGo").disabled = true; $("postGo").textContent = "Posting…"; $("postErr").hidden = true;
+    send({ type: "issue_post", ref: st.postRef, body, snapshot: st.postSnapshot, session: st.session && st.session.id });
+  };
+  // On Stop, or on leaving a session: one dialog for every issue item that changed since its last post.
+  function openOffer(m) {
+    st.offerSession = m.session; st.offerSnapshots = Object.fromEntries(m.items.map((it) => [it.ref, it.snapshot]));
+    $("offerHint").textContent = `These items in “${m.title}” changed since they were last posted. Untick any you don't want to post, and edit the comments if you like.`;
+    $("offerList").innerHTML = m.items.map((it) =>
+      `<li data-ref="${esc(it.ref)}"><label class="check"><input type="checkbox" checked> ${esc(it.ref)}: ${esc(it.heading.replace(/^#+\s*/, ""))}</label>` +
+      (it.note ? `<span class="hint">${esc(it.note)}</span>` : "") +
+      `<textarea rows="8" spellcheck="true" aria-label="Comment for ${esc(it.ref)}">${esc(it.body)}</textarea></li>`).join("");
+    $("offerErr").hidden = true; $("offerGo").disabled = false; $("offerGo").textContent = "Post ticked";
+    if (!$("offerDlg").open) $("offerDlg").showModal();
+  }
+  $("offerGo").onclick = () => {
+    const posts = [...$("offerList").children].filter((li) => li.querySelector("input").checked)
+      .map((li) => ({ ref: li.dataset.ref, body: li.querySelector("textarea").value.trim(), snapshot: st.offerSnapshots[li.dataset.ref] }))
+      .filter((p) => p.body);
+    if (!posts.length) { $("offerDlg").close(); return; }
+    $("offerGo").disabled = true; $("offerGo").textContent = "Posting…";
+    send({ type: "issues_post_many", session: st.offerSession, posts });
+  };
+  function offerPosted(results) {
+    const bad = results.filter((r) => r.error), good = results.filter((r) => r.url);
+    for (const r of good) { const li = $("offerList").querySelector(`li[data-ref="${CSS.escape(r.ref)}"]`); if (li) li.remove(); }
+    if (good.length) toast(`✓ Posted ${good.length} update${good.length === 1 ? "" : "s"} to GitHub.`);
+    if (!bad.length) { if ($("offerDlg").open) $("offerDlg").close(); return; }
+    $("offerErr").textContent = "Not posted: " + bad.map((r) => `${r.ref}: ${r.error}`).join("; ");
+    $("offerErr").hidden = false; $("offerGo").disabled = false; $("offerGo").textContent = "Try again";
+  }
 
   // ---------------------------------------------------------------- meeting time
   const hhmm = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });

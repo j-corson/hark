@@ -38,6 +38,7 @@
       <button type="button" data-act="copy">Copy Markdown</button>
       <button type="button" data-act="download">Download .md</button>
       <button type="button" data-act="agenda">Start from an agenda…</button>
+      <button type="button" data-act="issues" id="issuesAct" hidden>Add GitHub issues…</button>
       <button type="button" data-act="timing">Meeting time…</button>
       <button type="button" data-act="brief">Instructions for Claude…</button>
       <button type="button" data-act="corpora">Collections…</button>
@@ -117,6 +118,10 @@
     </label>
     <textarea id="agendaText" rows="7" placeholder="# Research backlog ideas&#10;- Ofgem consultation responses: how supplier views on flexibility changed&#10;  - every response since 2010?&#10;- Half-hourly smart meter data for 1,000 homes"></textarea>
     <label class="inline file">Or load a file <input type="file" id="agendaFile" accept=".md,.markdown,.txt,text/plain,text/markdown"></label>
+    <div class="issuepick" id="agendaIssues" hidden>
+      <span>GitHub issues: <span id="agendaIssueList">none</span></span>
+      <button type="button" class="quiet" id="agendaIssueBtn">Choose issues…</button>
+    </div>
     <label class="inline">Aims (optional): what the meeting must achieve, one per line
       <textarea id="agendaAims" rows="2" placeholder="Agree the budget split&#10;Pick a venue for March"></textarea>
     </label>
@@ -154,6 +159,43 @@
       <input id="corpAbout" autocomplete="off" placeholder="e.g. transcripts and notes from the project">
     </label>
     <div class="row"><button value="cancel" class="quiet">Close</button><button type="button" class="primary" id="corpAdd">Add</button></div>
+  </form>
+</dialog>
+
+<dialog id="issueDlg">
+  <form method="dialog" class="dlg">
+    <h2>GitHub issues</h2>
+    <p class="hint">Each issue becomes an item to grill. Claude drafts its first questions from the issue's description.</p>
+    <div class="issuerepo">
+      <label class="inline">Repo <input id="issueRepo" autocomplete="off" spellcheck="false" placeholder="owner/repo"></label>
+      <button type="button" class="quiet" id="issueLoad">Show open issues</button>
+    </div>
+    <input id="issueFilter" class="issuefilter" autocomplete="off" placeholder="Filter by title" aria-label="Filter issues by title" hidden>
+    <ul id="issueList" class="issuelist"></ul>
+    <p class="hint" id="issueMsg"></p>
+    <label class="inline">Or type them: <input id="issueRefs" autocomplete="off" spellcheck="false" placeholder="#12, owner/repo#12 or a link"></label>
+    <div class="row"><button value="cancel" class="quiet">Cancel</button><button value="ok" class="primary">Add</button></div>
+  </form>
+</dialog>
+
+<dialog id="postDlg">
+  <form method="dialog" class="dlg">
+    <h2 id="postTitle">Post to issue</h2>
+    <p class="hint warn" id="postNote" hidden></p>
+    <p class="hint">This comment goes on the issue when you press Post. You can change it first.</p>
+    <textarea id="postBody" rows="14" spellcheck="true"></textarea>
+    <p class="hint bad" id="postErr" hidden></p>
+    <div class="row"><button value="cancel" class="quiet">Cancel</button><button type="button" class="primary" id="postGo">Post</button></div>
+  </form>
+</dialog>
+
+<dialog id="offerDlg">
+  <form method="dialog" class="dlg">
+    <h2>Post updates to issues</h2>
+    <p class="hint" id="offerHint">These items changed since they were last posted. Untick any you don't want to post, and edit the comments if you like.</p>
+    <ul id="offerList" class="offerlist"></ul>
+    <p class="hint bad" id="offerErr" hidden></p>
+    <div class="row"><button value="cancel" class="quiet">Not now</button><button type="button" class="primary" id="offerGo">Post ticked</button></div>
   </form>
 </dialog>
 

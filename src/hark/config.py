@@ -17,6 +17,7 @@ from .corpus import Corpus, make_spec, read_saved
 
 CONFIG = Path(os.environ.get("HARK_CONFIG", Path.home() / ".config" / "hark"))
 KEYS = ("provider", "model", "research_model", "base_url", "api_key")
+ISSUE_KEYS = ("issues_repo", "issues_disclaimer")  # GitHub issues in grilling: the last repo used, and the comment's first line
 
 
 def config_dir() -> Path:
@@ -67,8 +68,24 @@ def save(settings: dict, corpora: list[dict] | None = None) -> Path:
     keep = load_corpora() if corpora is None else corpora
     if keep:
         clean["corpora"] = keep
+    clean.update({k: v for k, v in _raw().items() if k in ISSUE_KEYS})
     write_private(path, (json.dumps(clean, indent=2) + "\n").encode())
     return path
+
+
+def issue_settings() -> dict:
+    """{"repo": the last repo issues were picked from, "disclaimer": start comments with the "Drafted with hark" line}."""
+    raw = _raw()
+    repo = raw.get("issues_repo")
+    return {"repo": repo if isinstance(repo, str) else "", "disclaimer": raw.get("issues_disclaimer") is not False}
+
+
+def save_issues_repo(repo: str) -> None:
+    raw = _raw()
+    if raw.get("issues_repo") == repo:
+        return
+    raw["issues_repo"] = repo
+    write_private(config_dir() / "config.json", (json.dumps(raw, indent=2) + "\n").encode())
 
 
 def save_corpora(corpora: list[dict]) -> Path:

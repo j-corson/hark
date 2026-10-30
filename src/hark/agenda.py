@@ -12,6 +12,9 @@ An agenda can also say what the meeting is for and when it ends:
   Aims: agree the budget split; pick a venue      (or a "## Aims" section of bullets)
   Ends: 11:30
 Aims become a "## Aims" checklist above the agenda; the end time is a session setting.
+
+In grilling, GitHub issues can join the agenda (see issues.py): each becomes an item
+with an `- **Issue**: owner/repo#N` field, and its body is prep material like agenda notes.
 """
 
 from __future__ import annotations
@@ -39,6 +42,7 @@ Return the whole document in `document`, laid out as the brief describes:
 - Facts the group shouldn't have to decide (whether a dataset is public, where to get it, its size or licence) go under the item as `- Look up: ...`, not as questions.
 - If <aims> is present, "## Aims" right after the title, with each aim as `- [ ] aim`, in the user's words.
 - "## Shared terms" (with any term the agenda clearly uses in more than one sense, as a question under the item where it matters) and "## Parked", empty if there is nothing for them.
+- If <issues> is present, each <issue> is already an item in the <document> you are given, with an `- **Issue**: owner/repo#N` field. Keep that field exactly as it is, as the item's first field, and draft the item's fields and questions from the issue's text, as for agenda notes. Don't copy the issue's text in wholesale.
 Don't invent facts. Suggested answers are suggestions for the group to accept or change, so make them concrete but plausible.
 
 In `research`, list up to 3 facts most worth looking up before the meeting, each as {"label": "<at most 8 words>", "question": "<self-contained question>"}. Facts only, never decisions.
@@ -55,6 +59,31 @@ PREP_SCHEMA = {
         },
     },
     "required": ["document"],
+}
+
+
+ITEM_PREP_SYSTEM = """You prepare new items that were just added to a grilling session already under way. You receive the <brief> the live session follows, the <document> as it stands (for context: titles, shared terms, what is already settled) and <new_items>: each new item's section as it is in the document, with the GitHub issue it came from.
+
+For each new item, return {"ref": "<its Issue ref>", "section": "<the item's whole section>"} in `items`, laid out as the brief describes:
+- Start with the item's ### heading line exactly as given, then `- **Issue**: owner/repo#N` exactly as given, as the first field, then all the brief's fields. Fill a field only from what the issue says, keeping its wording; otherwise "?". Status: not started.
+- Then "#### Open questions" with its first round: up to 3 questions that can be answered now, most important first, in the brief's format, each with your suggested answer. Start with whatever decides Question, Track and Done when.
+- Facts the group shouldn't have to decide go under the item as `- Look up: ...`, not as questions.
+Return only the new items. Don't touch, repeat or refer to other items. Don't invent facts, and don't copy the issue's text in wholesale.
+
+In `research`, list up to 2 facts most worth looking up, each as {"label": "<at most 8 words>", "question": "<self-contained question>"}. Facts only, never decisions.
+In `summary`, say in at most 10 words what you prepared."""
+
+ITEM_PREP_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {"type": "object", "properties": {"ref": {"type": "string"}, "section": {"type": "string"}}, "required": ["ref", "section"]},
+        },
+        "summary": {"type": "string"},
+        "research": PREP_SCHEMA["properties"]["research"],
+    },
+    "required": ["items"],
 }
 
 
@@ -134,9 +163,35 @@ def aims_section(aims: list[str]) -> str:
     return "## Aims\n" + "\n".join(f"- [ ] {a}" for a in aims)
 
 
-def layout(text: str, mode: str, aims: list[str] | None = None) -> str:
+def issue_item(n: int, issue: dict) -> str:
+    """A GitHub issue as a numbered grilling item, before Claude has read it."""
+    return "\n".join([f"### {n}. {issue['title'].strip() or issue['ref']}", f"- **Issue**: {issue['ref']}",
+                      "- **Question**: ?", "- **Status**: not started"])
+
+
+def next_item_number(doc: str) -> int:
+    nums = [int(m.group(1)) for m in re.finditer(r"^###\s+(\d+)[.)]", doc, re.M)]
+    return max(nums, default=0) + 1
+
+
+def append_items(doc: str, sections: list[str]) -> str:
+    """Add items at the end of "## Items" (made if missing), leaving every other item as it is."""
+    lines = doc.rstrip("\n").split("\n")
+    start = next((i for i, l in enumerate(lines) if l.strip().lower() == "## items"), None)
+    if start is None:
+        return doc.rstrip("\n") + "\n\n## Items\n\n" + "\n\n".join(sections) + "\n"
+    end = next((i for i in range(start + 1, len(lines)) if re.match(r"^#{1,2}\s", lines[i])), len(lines))
+    while end > start + 1 and not lines[end - 1].strip():
+        end -= 1
+    block = [""] + "\n\n".join(sections).split("\n") + ([""] if end < len(lines) else [])
+    return "\n".join(lines[:end] + block + lines[end:]).rstrip("\n") + "\n"
+
+
+def layout(text: str, mode: str, aims: list[str] | None = None, issues: list[dict] | None = None) -> str:
     """The document a session starts from, before Claude has seen the agenda."""
     title, context, items = parse(text)
+    if not title and not items and issues and len(issues) == 1:
+        title = issues[0]["title"].strip()
     template = _with_title(MODES[mode]["template"], title)
     if aims and mode != "grill":
         template = _insert_section(template, aims_section(aims), "## Discussion")
@@ -146,6 +201,8 @@ def layout(text: str, mode: str, aims: list[str] | None = None) -> str:
         body = []
         for n, it in enumerate(items, 1):
             body += [f"### {n}. {it['text']}", "- **Question**: ?", *(f"- {x}" for x in it["notes"]), "- **Status**: not started", ""]
+        for n, issue in enumerate(issues or [], len(items) + 1):
+            body += [issue_item(n, issue), ""]
         if context:
             template = template.replace("\n## Items\n", "\n" + "\n".join(context) + "\n\n## Items\n", 1)
         return template.replace("## Items\n", "## Items\n\n" + "\n".join(body), 1)
@@ -158,8 +215,25 @@ def layout(text: str, mode: str, aims: list[str] | None = None) -> str:
     return _insert_section(template, "## Agenda\n" + "\n".join(rows), "## Discussion")
 
 
-def build_prep_prompt(brief: str, agenda: str, aims: list[str] | None = None) -> str:
+def issue_text(issue: dict) -> str:
+    body = (issue.get("body") or "").strip()[:MAX_CHARS // 2].replace("</issue>", "</ issue>") or "(no description)"
+    title = issue["title"].strip().replace('"', "'")
+    return f'<issue ref="{issue["ref"]}" title="{title}">\n{body}\n</issue>'
+
+
+def build_prep_prompt(brief: str, agenda: str, aims: list[str] | None = None, issues: list[dict] | None = None,
+                      document: str = "") -> str:
     parts = [f"<brief>\n{brief.strip()}\n</brief>", f"<agenda>\n{agenda.strip()[:MAX_CHARS]}\n</agenda>"]
     if aims:
         parts.append("<aims>\n" + "\n".join(f"- {a}" for a in aims) + "\n</aims>")
+    if issues:
+        parts.append("<issues>\n" + "\n\n".join(issue_text(i) for i in issues) + "\n</issues>")
+        parts.append(f"<document>\n{document.strip()}\n</document>")
     return "\n\n".join(parts + ["Return the prepared document."])
+
+
+def build_item_prep_prompt(brief: str, document: str, new: list[tuple[str, dict]]) -> str:
+    """Prep for items added mid-session: `new` is [(the item's section as added, its issue)]."""
+    items = "\n\n".join(f"{section}\n{issue_text(issue)}" for section, issue in new)
+    return "\n\n".join([f"<brief>\n{brief.strip()}\n</brief>", f"<document>\n{document.strip()[:MAX_CHARS]}\n</document>",
+                        f"<new_items>\n{items}\n</new_items>", "Return the new items."])

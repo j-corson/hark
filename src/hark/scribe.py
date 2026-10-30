@@ -8,7 +8,7 @@ backends.py for the API options.
 
 from __future__ import annotations
 
-from .agenda import PREP_SCHEMA, PREP_SYSTEM
+from .agenda import ITEM_PREP_SCHEMA, ITEM_PREP_SYSTEM, PREP_SCHEMA, PREP_SYSTEM
 from .backends import Backend, ScribeError  # noqa: F401  (ScribeError is re-exported)
 
 SYSTEM = """You are the scribe for a live document that people glance at while they talk. You receive:
@@ -203,3 +203,8 @@ class Scribe:
         """Lay out a grilling session from its agenda, with first questions. One bigger call, before the talking starts."""
         return await self.backend.json(PREP_SYSTEM, PREP_SCHEMA, prompt, effort="medium" if self.effort else None,
                                        timeout=timeout, hint='{"document": "...", "summary": "...", "research": [...]}')
+
+    async def prepare_items(self, prompt: str, timeout: float = 240) -> tuple[dict, float]:
+        """Lay out items added mid-session (GitHub issues), returning only those items' sections."""
+        return await self.backend.json(ITEM_PREP_SYSTEM, ITEM_PREP_SCHEMA, prompt, effort="medium" if self.effort else None,
+                                       timeout=timeout, hint='{"items": [{"ref": "...", "section": "..."}], "summary": "...", "research": [...]}')

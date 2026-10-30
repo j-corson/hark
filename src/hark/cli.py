@@ -22,6 +22,7 @@ from . import config as settings_file
 from .agenda import parse as parse_agenda, plan as agenda_plan
 from .backends import PROVIDERS, make_backend
 from .config import CONFIG, config_dir, write_private
+from .issues import GH_NEEDED, parse_ref, ref_str
 from .modes import MODES
 from .session import default_data_dir
 
@@ -89,6 +90,25 @@ def print_qr(url: str) -> None:
         q.print_ascii(invert=True)
     except Exception:
         pass
+
+
+def issue_plan(refs: list[str], mode: str | None, gh_ok: bool) -> tuple[str, list[str], list[str]]:
+    """What to do with --issue: (the mode to start in, the issues to bring in, warnings to print).
+    Issues mean grilling: with no --mode they imply it, and with another mode they are ignored."""
+    if not refs:
+        return mode or "meeting", [], []
+    if mode and mode != "grill":
+        return mode, [], [f"--issue needs --mode grill (you gave --mode {mode}), so the issues were left out."]
+    if not gh_ok:
+        return mode or "meeting", [], [GH_NEEDED]
+    good, warnings = [], []
+    for r in refs:
+        parsed = parse_ref(r)
+        if parsed:
+            good.append(ref_str(*parsed))
+        else:
+            warnings.append(f"--issue {r}: not an issue. Write it as owner/repo#12 or its link.")
+    return ("grill" if good else mode or "meeting"), good, warnings
 
 
 def resolve(args) -> dict:
@@ -194,9 +214,11 @@ def check(args) -> None:
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="hark", description="Listen to a conversation and keep a live document with Claude.")
     p.add_argument("--port", type=int, default=8765)
-    p.add_argument("--mode", default="meeting", choices=list(MODES), help="starting document mode (switchable in the app)")
+    p.add_argument("--mode", choices=list(MODES), help="starting document mode (switchable in the app; default meeting)")
     p.add_argument("--agenda", metavar="FILE", type=Path,
                    help="start from an agenda (Markdown or text, one item per bullet or line); in grilling mode Claude drafts first questions")
+    p.add_argument("--issue", action="append", default=[], metavar="OWNER/REPO#N",
+                   help="grill a GitHub issue (or its link); repeatable. Implies --mode grill, and needs the GitHub CLI (gh), logged in")
     p.add_argument("--lan", action="store_true", help="also serve over HTTPS on your local network (to use a phone)")
     p.add_argument("--setup", action="store_true", help="choose which AI service hark uses (your Claude subscription, or an API key), then exit")
     p.add_argument("--provider", choices=PROVIDERS,
@@ -227,6 +249,7 @@ def main(argv: list[str] | None = None) -> None:
                    help="replace the access key so old links and signed-in browsers stop working, then exit")
     p.add_argument("--version", action="version", version=f"hark {__version__}")
     args = p.parse_args(argv)
+    mode_given, args.mode = args.mode, args.mode or "meeting"
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
     for name in ("aiohttp.access", "httpx", "httpx2", "httpcore2", "anthropic", "openai"):
@@ -281,21 +304,37 @@ def main(argv: list[str] | None = None) -> None:
     if not scribe.available:
         print(f"\n  ! {scribe.problem}\n    Transcripts will work but the document won't update.\n", file=sys.stderr)
     args.data_dir.mkdir(parents=True, exist_ok=True)
+    from .issues import GhRunner
     from .research import Researcher
     library = build_corpora(args)
     corpora = list(library.current().values())
-    hub = Hub(engine, scribe, args.data_dir, args.speaker_threshold, Researcher(scribe, cfg["research_model"], corpora=library))
+    hub = Hub(engine, scribe, args.data_dir, args.speaker_threshold, Researcher(scribe, cfg["research_model"], corpora=library),
+              gh=GhRunner())
     hub.session.set_mode(args.mode)
     key = token()
     app = make_app(hub, key)
 
     async def run():
-        if agenda_text is not None:
-            if not await hub.load_agenda(agenda_text, args.mode):
+        # Only --issue waits for `gh auth status`; otherwise the page hears about it when it's known.
+        gh_ok = await hub.check_issues() if args.issue else False
+        if not args.issue:
+            hub.spawn(hub.check_issues(announce=True))
+        mode, refs, warnings = issue_plan(args.issue, mode_given, gh_ok)
+        for w in warnings:
+            print(f"  ! {w}", file=sys.stderr, flush=True)
+        found = []
+        if refs:
+            hub.session.set_mode(mode)
+            found, errors = await hub.fetch_issues(refs)
+            for e in errors:
+                print(f"  ! {e}", file=sys.stderr, flush=True)
+        if agenda_text is not None or found:
+            if not await hub.load_agenda(agenda_text or "", mode, issues=found):
                 raise SystemExit(f"No agenda items or aims found in {args.agenda}. Put one item per bullet or line.")
-            n = len(parse_agenda(agenda_plan(agenda_text)[0])[2])
-            print(f"  Agenda: {n} item{'s' * (n != 1)} from {args.agenda}"
-                  + (" (Claude is drafting first questions)" if hub.prep else ""), flush=True)
+            n = len(parse_agenda(agenda_plan(agenda_text)[0])[2]) if agenda_text else 0
+            what = [f"{n} agenda item{'s' * (n != 1)} from {args.agenda}"] if agenda_text is not None else []
+            what += [f"{len(found)} GitHub issue{'s' * (len(found) != 1)}"] if found else []
+            print(f"  Starting from {' and '.join(what)}" + (" (Claude is drafting first questions)" if hub.prep else ""), flush=True)
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
         await web.TCPSite(runner, "127.0.0.1", args.port).start()

@@ -212,6 +212,22 @@ dialog::backdrop { background: color-mix(in srgb, #000 40%, transparent); }
 .corplist .m.bad { color: var(--err); }
 .corplist .b { grid-column: 2; grid-row: 1 / span 3; display: flex; gap: 6px; }
 .corplist .b button { font-size: 13px; padding: 4px 9px; border: 1px solid var(--line); }
+.sheet .issuebtn { font-size: 13px; font-weight: 600; color: var(--act); margin-left: 10px; padding: 1px 9px; border: 1px solid currentColor; border-radius: 99px; vertical-align: middle; }
+.sheet .issuebtn:disabled { color: var(--muted); border-color: var(--line); cursor: default; }
+.sheet .issuelink { font-size: 13px; font-weight: 400; margin-left: 8px; vertical-align: middle; }
+.issuepick, .issuerepo { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; font-size: 15px; }
+.issuepick button, .issuerepo button { border: 1px solid var(--line); font-size: 14px; padding: 4px 10px; }
+.dlg .issuerepo .inline input { width: 14em; max-width: 100%; }
+.dlg .inline input#issueRefs, .issuefilter { display: block; width: 100%; margin-top: 4px; border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; background: var(--sheet); }
+.issuelist, .offerlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 45vh; overflow: auto; }
+.issuelist label { display: flex; gap: 8px; align-items: baseline; font-size: 15px; }
+.issuelist .lbl { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 0 7px; margin-left: 4px; }
+.issuelist .in { font-size: 13px; color: var(--muted); }
+.offerlist li { display: grid; gap: 6px; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.offerlist .check { font-weight: 600; }
+.offerlist textarea { font-size: 14px; }
+.dlg .hint.bad, .offerlist .bad { color: var(--err); }
+.dlg .hint.warn { color: var(--ink); font-weight: 600; }
 .dlg .inline input#corpSpec, .dlg .inline input#corpAbout { display: block; width: 100%; margin-top: 4px; padding: 7px 9px; }
 .sesslist { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow-y: auto; }
 .sesslist button { width: 100%; text-align: left; display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; }

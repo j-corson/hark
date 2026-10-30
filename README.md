@@ -97,6 +97,16 @@ While you're on an item, Claude keeps up to three open questions under it, most 
 - Terms used loosely ("flexibility") get a question, then an entry in **Shared terms**.
 - An item is marked ready only when the group says it's done with it ("next item").
 
+### Grilling GitHub issues
+
+If you use the [GitHub CLI](https://cli.github.com/) and are logged in (`gh auth login`), a grilling session can start from GitHub issues and post each item's spec back to its issue. hark never sees a GitHub token: it runs `gh` for you. Without `gh`, none of this shows.
+
+- **Bring issues in**: in **☰ → Start from an agenda…** with grilling chosen, press **Choose issues…**; mid-session, use **☰ → Add GitHub issues…**. Type the repo (`owner/repo`, remembered for next time) to list its 50 newest open issues, filter by title and tick the ones you want, or type `#12`, `owner/repo#12` or an issue link. From the command line: `hark --issue owner/repo#12` (repeatable; it implies `--mode grill`).
+- Each issue becomes an item with an **Issue** field (`- **Issue**: owner/repo#12`) as its first field. That field is the link to the issue, wherever the item moves or whatever it is renamed to; Claude never changes it. Delete it by hand and the item is no longer linked. Claude drafts the item's fields and first questions from the issue's description. Issues added mid-session are prepared on their own, and other items are left alone.
+- **Post to issue**, beside an issue item's heading, opens the comment to post: the item's fields, open questions with suggested answers and disputes, questions parked from it, the shared terms it uses and its "Look up" notes, ending with the session title and date. You can edit it before pressing **Post**; nothing is posted otherwise. From the second post on, it starts with **Since the last update**: what was filled in, changed, answered, added, parked or disputed. When nothing has changed since the last post, the button says **Nothing new to post**.
+- When you press **Stop**, or switch to another session, hark offers **Post updates to issues** for the issue items that changed since their last post. Untick any you don't want; closing the dialog posts nothing.
+- Comments start with "*Drafted with hark from a meeting discussion.*" To leave that line out, add `"issues_disclaimer": false` to `~/.config/hark/config.json`. No transcript goes into a comment, and hark never edits, labels or closes an issue.
+
 The method (ask everything that can be answered now, with a recommended answer, and let "yes" accept it) is adapted from Matt Pocock's [grilling skill](https://github.com/mattpocock/skills/blob/main/skills/productivity/grilling/SKILL.md), which is MIT-licensed.
 
 ## Research
@@ -200,6 +210,7 @@ To send the document to someone, use **☰ → Share…**, which opens your phon
 |---|---|
 | `--mode meeting\|outline\|grill\|notes` | Starting mode. You can also switch in the app; while a document is still empty, switching changes its template. |
 | `--agenda file.md` | Start from an agenda (see [Starting from an agenda](#starting-from-an-agenda)). |
+| `--issue owner/repo#12` | Grill a GitHub issue; repeatable. Needs the GitHub CLI, logged in (see [Grilling GitHub issues](#grilling-github-issues)). |
 | `--setup` | Choose the AI service and save it (see [Choosing the AI service](#choosing-the-ai-service)). |
 | `--provider claude-code\|anthropic\|openai` | Use a different service for this run. |
 | `--model sonnet` | Model for updates. With Claude, `haiku` is lighter on usage and `opus` is the most careful. With an OpenAI-compatible service, use the name it lists. |

@@ -62,6 +62,7 @@ class Session:
         self.ends: float | None = None  # when the meeting is due to end, if anyone said
         self.nudge = False  # remind the room near the end if aims or agenda items are still open
         self.nudged = False  # ...and that reminder has been shown
+        self.issues: dict[str, dict] = {}  # "owner/repo#N" -> {"posts": [{"at", "url"}], "snapshot": the item as last posted}
 
     # -- paths / naming -----------------------------------------------------
     @property
@@ -179,7 +180,7 @@ class Session:
             "doc": self.doc, "history": self.history[-20:], "lines": self.lines, "processed": self.processed,
             "next_line": self._next_line, "speakers": self.speakers.to_json(),
             "research": self.research, "research_auto": self.research_auto, "corpus": self.corpus, "next_research": self._next_research,
-            "ends": self.ends, "nudge": self.nudge, "nudged": self.nudged,
+            "ends": self.ends, "nudge": self.nudge, "nudged": self.nudged, "issues": self.issues,
         }
         _atomic_write(self.dir / "session.json", json.dumps(state))
         if self._log:
@@ -217,7 +218,14 @@ class Session:
         s._next_research = d.get("next_research", len(s.research) + 1)
         s.ends = d.get("ends") if isinstance(d.get("ends"), (int, float)) else None
         s.nudge, s.nudged = bool(d.get("nudge")), bool(d.get("nudged"))
+        s.issues = {ref: v for ref, v in (d.get("issues") or {}).items() if isinstance(v, dict)} if isinstance(d.get("issues"), dict) else {}
         return s
+
+    def record_post(self, ref: str, url: str, snapshot: str) -> None:
+        """An item was posted to its issue: remember where, and what it said, so the next post can say what changed."""
+        entry = self.issues.setdefault(ref, {"posts": [], "snapshot": None})
+        entry["posts"].append({"at": time.time(), "url": url})
+        entry["snapshot"] = snapshot
 
     def set_ends(self, ends: float | None, nudge: bool | None = None) -> None:
         if ends != self.ends:

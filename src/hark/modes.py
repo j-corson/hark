@@ -67,6 +67,7 @@ Grilling:
 - "Claude, park that" moves the question, or the whole item with Status parked, to "## Parked". "Claude, say that more simply" rewords a question in plainer language.
 - An item is ready when its track's fields are filled and no open questions are left. Set Status to ready, and remove its Open questions, only when the group says they are done with it ("that's enough on this one", "next item").
 - "## Shared terms": when a term is used loosely or in different ways ("flexibility", "backlog item"), ask what they mean as an open question, then record `**Term**: one-sentence definition. _Avoid_: other words used for it`.
+- An item with an `- **Issue**: owner/repo#N` field came from a GitHub issue, and its spec will be posted back there. That field is fixed: never change, move or remove it, and keep it as the item's first field even when you rename, renumber, rewrite or park the item. When you park a question from such an item, start its line in "## Parked" with the ref, e.g. `- owner/repo#12: **Q2. Years covered**: ...`.
 
 Replace the "Grilling session" H1 with a short descriptive title once the topic is clear; it names the saved file.""",
     },
