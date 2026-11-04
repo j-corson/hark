@@ -1010,7 +1010,7 @@ class Hub:
                     # only a line out of Unknown teaches them a voice, the one Unknown held for it.
                     held = s.speakers.resolve(l["speaker"]) == UNKNOWN
                     s.speakers.claim(target, l["speaker"] if held else None)
-                    l["speaker"], l["manual"] = target, True
+                    l["speaker"] = target
             s.save()
             await self.push_state()
         elif kind == "set_mode":

@@ -173,7 +173,7 @@ def test_saying_who_said_a_line_teaches_that_speakers_voice(tmp_path):
 
     async def go():
         await hub.handle(ws, {"type": "reassign", "line": line["id"], "name": "Mike"})
-        assert s.speakers.resolve(line["speaker"]) == mike and line["manual"] is True
+        assert s.speakers.resolve(line["speaker"]) == mike
         assert s.speakers.items[mike]["n"] == 1 and not s.speakers.pending  # his voice is known from that one line
         for _ in range(PROMOTE_AT):
             s.speakers.assign(said(b, rng, 0.7), 3.0)
@@ -196,7 +196,7 @@ def test_a_line_given_to_a_speaker_by_hand_stays_with_them(tmp_path):
     async def go():
         await hub.handle(ws, {"type": "reassign", "line": line["id"], "name": s.speakers.name(small)})
         s.speakers.assign(said(a, rng, 0.7), 3.0)  # the firmer profile would otherwise take that small one in
-        assert s.speakers.resolve(line["speaker"]) == small and line["manual"] is True
+        assert s.speakers.resolve(line["speaker"]) == small
 
     asyncio.run(go())
 
