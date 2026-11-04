@@ -220,6 +220,7 @@ To send the document to someone, use **☰ → Share…**, which opens your phon
 | `--research-model opus` | Claude model for research lookups. The default is the same as `--model`. |
 | `--corpus [NAME=]FOLDER` | Let Claude search a folder of your own documents for this run (see [Your own documents](#your-own-documents)). `--add-corpus FOLDER\|OWNER/REPO` saves a folder or GitHub repo for every run, `--remove-corpus NAME` forgets it. |
 | `--asr parakeet\|moonshine` | Speech model. Parakeet (default) is accurate, adds punctuation and handles 25 European languages. Moonshine is English-only, smaller and faster, for older laptops. |
+| `--threads 2` | How many processor threads transcription may use. The default is half the ones your machine has, so there is always some left for everything else; a two-core laptop ends up with one. Lower it if the rest of the machine goes sluggish while hark listens, raise it if transcription falls behind. Set `HARK_THREADS` to make your choice the default. |
 | `--lan` | Also serve over HTTPS on your network, for your phone. |
 | `--pptx deck.pptx` | Link a PowerPoint deck to add slides to while it's open (Windows only; see [Adding slides to a PowerPoint deck](#adding-slides-to-a-powerpoint-deck)). |
 | `--replay file.m4a` | Feed a recording through as if it were live. Useful for old recordings or for trying hark out. Needs ffmpeg for formats other than WAV. |
@@ -272,7 +273,8 @@ Everything on the speech side uses [sherpa-onnx](https://github.com/k2-fsa/sherp
 - **"Claude couldn't update"**: run `hark --check`. With your subscription, if it says you're logged out, run `claude` and sign in. With an API, run `hark --setup` to check the key, address and model name.
 - **The phone says the microphone is blocked**: open the `https://` link from `hark --lan`, not `http://`.
 - **No call audio**: the share dialog has a separate **Share audio** toggle. Turn it on.
-- **Transcription falls behind** (shown in the status line): try `--asr moonshine`.
+- **Transcription falls behind** (shown in the status line): try `--asr moonshine`, the smaller and faster speech model, or give transcription more of the processor with `--threads 3`.
+- **The rest of the laptop goes sluggish** while hark is listening: `--threads 1` keeps transcription to a single processor thread, which leaves windows, the browser and everything else free. `--asr moonshine` is lighter work again. Both together suit an older two-core laptop.
 
 ## Licence
 
