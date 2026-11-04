@@ -27,6 +27,7 @@ from .screen import WAKE, addressed, screen_request, screen_sections  # noqa: F4
 from .scribe import Scribe, ScribeError, build_prompt, build_tidy_prompt
 from .modes import MODES
 from .session import Session, list_sessions
+from .speakers import UNKNOWN
 
 log = logging.getLogger("hark")
 SOURCES = {0: "mic", 1: "call", 2: "replay"}
@@ -346,14 +347,14 @@ class Hub:
             return
         if not text or session is not self.session:
             return
-        merges = len(session.speakers.alias)
+        relabels = session.speakers.relabels
         sid = session.speakers.assign(emb, len(samples) / SR, st.last_speaker)
         st.last_speaker = sid
         line = session.add_line(t, st.source, sid, text)
         await self._screen_request(session, line)
         session.save()
-        if len(session.speakers.alias) != merges:
-            await self.push_state()  # two speakers were merged: relabel earlier lines everywhere
+        if session.speakers.relabels != relabels:
+            await self.push_state()  # speakers were merged or promoted: relabel earlier lines everywhere
         else:
             await self.broadcast({"type": "line", "line": session.public_line(line), "speakers": session.speakers.public()})
         await self.push_status()
@@ -706,7 +707,7 @@ class Hub:
         for label, name in speaker_pairs(data.get("speaker_names")):
             label, name = str(label).strip(), str(name).strip()
             for sid, sp in list(s.speakers.items.items()):
-                if name and sp["name"].lower() == label.lower() and (sp["auto"] or respelling(sp["name"], name)):
+                if name and sid != UNKNOWN and sp["name"].lower() == label.lower() and (sp["auto"] or respelling(sp["name"], name)):
                     was = sp["name"]
                     s.speakers.rename(sid, name)
                     new = rename_in_doc(new, was, s.speakers.name(sid))
@@ -1001,9 +1002,16 @@ class Hub:
             s.save()
             await self.push_state()
         elif kind == "reassign":
-            target = s.speakers.named(msg.get("name", "").strip() or "Unknown")
+            name = msg.get("name", "").strip()
+            target = s.speakers.named(name) if name else UNKNOWN
             for l in s.lines:
                 if l["id"] == msg.get("line"):
+                    # A line given by hand is that speaker's for good, so claim them either way;
+                    # only a line out of Unknown teaches them a voice, the one Unknown held for it.
+                    held = s.speakers.resolve(l["speaker"]) == UNKNOWN
+                    if held and target == UNKNOWN:
+                        break  # already Unknown and left blank: nothing was said, so nothing changes
+                    s.speakers.claim(target, l["speaker"] if held else None)
                     l["speaker"] = target
             s.save()
             await self.push_state()

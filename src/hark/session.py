@@ -19,7 +19,7 @@ from pathlib import Path
 
 from .docops import tidy
 from .modes import DEFAULT_MODE, MODES
-from .speakers import Speakers
+from .speakers import UNKNOWN, UNKNOWN_NOTE, Speakers
 
 HISTORY = 100
 
@@ -145,7 +145,8 @@ class Session:
 
     def speaker_notes(self) -> list[str]:
         used = {self.speakers.resolve(l["speaker"]) for l in self.lines if l["kind"] == "speech"}
-        return [f"{sp['name']}" + (" (auto label)" if sp["auto"] else "") for sid, sp in self.speakers.items.items() if sid in used]
+        return [UNKNOWN_NOTE if sid == UNKNOWN else f"{sp['name']}" + (" (auto label)" if sp["auto"] else "")
+                for sid, sp in self.speakers.items.items() if sid in used]
 
     # -- views --------------------------------------------------------------
     def public_line(self, l: dict) -> dict:

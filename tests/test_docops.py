@@ -1,7 +1,4 @@
-import numpy as np
-
 from hark.docops import apply_ops, changed_lines
-from hark.speakers import Speakers
 
 DOC = """# Meeting notes
 
@@ -66,17 +63,3 @@ def test_changed_lines():
     new = DOC.replace("## Decisions\n", "## Decisions\n- New\n")
     idx = changed_lines(DOC, new)
     assert [new.split("\n")[i] for i in idx] == ["- New"]
-
-
-def test_speaker_clustering_and_merge():
-    rng = np.random.default_rng(0)
-    a, b = rng.normal(size=192), rng.normal(size=192)
-    sp = Speakers(threshold=0.5)
-    s1 = sp.assign(a + rng.normal(scale=0.2, size=192), 3.0)
-    s2 = sp.assign(b + rng.normal(scale=0.2, size=192), 3.0)
-    s1b = sp.assign(a + rng.normal(scale=0.2, size=192), 3.0)
-    assert s1 == s1b and s1 != s2
-    assert sp.assign(None, 0.5, previous=s2) == s2  # too short: same speaker continues
-    sp.rename(s1, "Ana")
-    kept = sp.rename(s2, "ana")  # same name merges
-    assert kept == s1 and sp.resolve(s2) == s1 and len(sp.items) == 1

@@ -17,13 +17,19 @@ WINDOW = 512  # silero VAD window
 PRE_ROLL = int(0.35 * SR)  # VAD fires a little late; keep the first syllable
 POST_ROLL = int(0.15 * SR)
 MIN_EMBED_SECONDS = 0.9  # shorter clips give unreliable voice embeddings
+MAX_THREADS = 4  # more than this buys little and starves the rest of the machine
+
+
+def default_threads() -> int:
+    """Half the logical cores, so a hyperthreaded laptop keeps about one physical core for the browser and the desktop."""
+    return max(1, min(MAX_THREADS, (os.cpu_count() or 2) // 2))
 
 
 class Engine:
     def __init__(self, asr: str = "parakeet", threads: int | None = None):
         self.asr_name = asr
         p = models.ensure(asr)
-        n = threads or max(1, min(4, (os.cpu_count() or 2)))
+        n = threads or default_threads()
         if asr == "parakeet":
             self.recognizer = so.OfflineRecognizer.from_transducer(
                 encoder=p["asr_encoder"], decoder=p["asr_decoder"], joiner=p["asr_joiner"],

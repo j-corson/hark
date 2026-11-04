@@ -3,6 +3,7 @@ import json
 
 from hark.rebuild import chunks, parse_hark, parse_vtt, rebuild
 from hark.session import Session, read_versions
+from hark.speakers import UNKNOWN
 
 VTT = """WEBVTT
 
@@ -17,6 +18,21 @@ VTT = """WEBVTT
 0f3e7a1c-1/20-0
 00:01:02.000 --> 00:01:04.000
 <v Tom O&apos;Neill>I'll send the draft.</v>
+"""
+
+NO_TAG_VTT = """WEBVTT
+
+1
+00:00:01.000 --> 00:00:03.000
+We agreed to ship on Friday.
+
+2
+00:00:04.000 --> 00:00:06.000
+<v Ana López>I'll send the draft.</v>
+
+3
+00:00:07.000 --> 00:00:09.000
+Thanks all.
 """
 
 
@@ -75,6 +91,16 @@ class FakeScribe:
     async def edit(self, prompt, timeout=120):
         self.prompts.append(prompt)
         return {"ops": [{"op": "append_to_section", "heading": "## Decisions", "text": f"- point {len(self.prompts)}"}]}, 0.1
+
+
+def test_captions_with_no_name_on_them_rebuild_into_a_speaker_you_can_name(tmp_path):
+    src = tmp_path / "meeting.vtt"
+    src.write_text(NO_TAG_VTT, encoding="utf-8")
+    s = asyncio.run(rebuild(src, tmp_path / "data", "meeting", FakeScribe(), say=lambda *_: None))
+    nobody = s.lines[0]["speaker"]
+    assert nobody != UNKNOWN and s.speakers.resolve(s.lines[2]["speaker"]) == nobody
+    assert s.speakers.rename(nobody, "Tom") == nobody  # one chip click names every such line
+    assert [s.speakers.name(l["speaker"]) for l in s.lines] == ["Tom", "Ana López", "Tom"]
 
 
 def test_rebuild_from_vtt_makes_a_new_session(tmp_path):

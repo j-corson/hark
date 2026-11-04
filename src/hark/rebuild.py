@@ -19,6 +19,7 @@ from .session import Session
 CHUNK_CHARS = 2500  # roughly three minutes of speech per Claude call
 CONTEXT_LINES = 12
 MERGE_CHARS = 400  # join a speaker's consecutive caption cues up to this length
+NO_VOICE = "Unnamed speaker"  # captions with no name on them: an ordinary speaker one rename sorts out, not the Unknown bucket
 
 _TS = re.compile(r"(?:(\d+):)?(\d{1,2}):(\d{2})(?:[.,](\d+))?")
 _CUE = re.compile(r"^\s*(\S+)\s+-->\s+(\S+)")
@@ -47,7 +48,7 @@ def parse_vtt(text: str) -> list[dict]:
         start = _seconds(_CUE.match(lines[cue]).group(1))
         body = " ".join(lines[cue + 1:]).strip()
         m = _VOICE.search(body)
-        speaker = html.unescape(m.group(1).strip()) if m else "Unknown"
+        speaker = html.unescape(m.group(1).strip()) if m else NO_VOICE
         words = html.unescape(_TAG.sub("", body)).strip()
         if not m and ": " in words[:60]:
             speaker, words = words.split(": ", 1)  # "Name: text" captions without a voice tag

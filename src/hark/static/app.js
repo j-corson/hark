@@ -284,13 +284,19 @@
     for (const [id, s] of Object.entries(st.speakers)) {
       if (!used.has(id)) continue;
       const b = document.createElement("button");
-      b.type = "button"; b.className = "chip" + (s.auto ? " auto" : "");
+      b.type = "button"; b.className = "chip" + (s.auto ? " auto" : "") + (s.unknown ? " unknown" : "");
       b.style.setProperty("--c", s.color);
-      b.textContent = s.name; b.title = "Rename this speaker";
-      b.onclick = () => {
-        const name = prompt(`Rename "${s.name}" to… (use an existing name to merge them)`, s.auto ? "" : s.name);
-        if (name && name.trim()) send({ type: "rename", id, name: name.trim() });
-      };
+      b.textContent = s.name;
+      if (s.unknown) {
+        b.title = "Voices hark hasn't matched to anyone yet";
+        b.onclick = () => toast("Unknown isn't one person. Click the name on a line to say who said that line.");
+      } else {
+        b.title = "Rename this speaker";
+        b.onclick = () => {
+          const name = prompt(`Rename "${s.name}" to… (use an existing name to merge them)`, s.auto ? "" : s.name);
+          if (name && name.trim()) send({ type: "rename", id, name: name.trim() });
+        };
+      }
       box.appendChild(b);
     }
     // Refresh names/colours on existing lines.
@@ -305,8 +311,8 @@
   $("transcript").addEventListener("click", (e) => {
     const b = e.target.closest(".who");
     if (!b) return;
-    const name = prompt("Who said this?");
-    if (name && name.trim()) send({ type: "reassign", line: +b.dataset.line, name: name.trim() });
+    const name = prompt("Who said this? Leave it blank to put the line back in Unknown.");
+    if (name !== null) send({ type: "reassign", line: +b.dataset.line, name: name.trim() });
   });
 
   // ---------------------------------------------------------------- status
