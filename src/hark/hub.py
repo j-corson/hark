@@ -350,7 +350,7 @@ class Hub:
         relabels = session.speakers.relabels
         sid = session.speakers.assign(emb, len(samples) / SR, st.last_speaker)
         st.last_speaker = sid
-        line = session.add_line(t, st.source, sid, text, emb=emb)
+        line = session.add_line(t, st.source, sid, text)
         await self._screen_request(session, line)
         session.save()
         if session.speakers.relabels != relabels:
@@ -1007,9 +1007,9 @@ class Hub:
             for l in s.lines:
                 if l["id"] == msg.get("line"):
                     # A line given by hand is that speaker's for good, so claim them either way;
-                    # only a line out of Unknown teaches them a voice.
+                    # only a line out of Unknown teaches them a voice, the one Unknown held for it.
                     held = s.speakers.resolve(l["speaker"]) == UNKNOWN
-                    s.speakers.claim(target, l["speaker"] if held else None, l.get("emb") if held else None)
+                    s.speakers.claim(target, l["speaker"] if held else None)
                     l["speaker"], l["manual"] = target, True
             s.save()
             await self.push_state()

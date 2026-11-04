@@ -189,19 +189,21 @@ class Speakers:
         self.items[sid].update(name=name, auto=False)
         return sid
 
-    def claim(self, sid: str, was: str | None = None, emb=None) -> str:
-        """Someone said who a held utterance was: take it out of Unknown and add its voice to that speaker."""
-        self.pending.pop(was, None)
+    def claim(self, sid: str, was: str | None = None) -> str:
+        """Someone said who a held utterance was: take it out of Unknown and add its voice to that speaker.
+
+        The voice is the one Unknown was already holding for that utterance; a line with nothing
+        held for it (rebuilt, or handed straight from one speaker to another) teaches no voice.
+        """
+        emb = self.pending.pop(was, None)
         sid = self.resolve(sid)
         if sid == UNKNOWN or sid not in self.items:
             return sid
         self.items[sid]["pinned"] = True
         if emb is None:
             return sid
-        e = np.asarray(emb, dtype=np.float32)
-        e = e / (np.linalg.norm(e) + 1e-9)
         sp = self.items[sid]
-        sp["sum"] = e if sp["sum"] is None else sp["sum"] + e
+        sp["sum"] = emb.copy() if sp["sum"] is None else sp["sum"] + emb
         sp["n"] += 1
         return self._settle(sid)
 

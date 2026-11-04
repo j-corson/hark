@@ -105,11 +105,8 @@ class Session:
         self._record("undo")
         return True
 
-    def add_line(self, t: float, source: str, speaker: str, text: str, kind: str = "speech", emb=None) -> dict:
+    def add_line(self, t: float, source: str, speaker: str, text: str, kind: str = "speech") -> dict:
         line = {"id": self._next_line, "t": t, "added": time.time(), "source": source, "speaker": speaker, "text": text, "kind": kind}
-        if emb is not None:
-            # Kept with the line so a meeting can be put through the clustering again later.
-            line["emb"] = [round(float(x), 4) for x in emb]
         self._next_line += 1
         self.lines.append(line)
         return line

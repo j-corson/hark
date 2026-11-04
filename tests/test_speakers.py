@@ -166,8 +166,7 @@ def test_saying_who_said_a_line_teaches_that_speakers_voice(tmp_path):
     rng = np.random.default_rng(19)
     a, b = voice(rng), voice(rng)
     s = Session(tmp_path)
-    emb = said(a, rng, 3.0)
-    line = s.add_line(1.0, "mic", s.speakers.assign(emb, 3.0), "mm, agreed", emb=emb)
+    line = s.add_line(1.0, "mic", s.speakers.assign(said(a, rng, 3.0), 3.0), "mm, agreed")
     assert s.speakers.resolve(line["speaker"]) == UNKNOWN
     mike = s.speakers.named("Mike")
     hub, ws = make_hub(tmp_path, s)
@@ -221,16 +220,17 @@ def test_claude_can_name_a_speaker_but_not_the_unknown_bucket(tmp_path):
     asyncio.run(go())
 
 
-def test_speech_lines_save_their_embedding_but_the_page_never_sees_it(tmp_path):
+def test_a_held_voice_is_saved_once_under_the_speakers_not_on_every_line(tmp_path):
     rng = np.random.default_rng(23)
     s = Session(tmp_path)
     emb = said(voice(rng), rng, 0.7)
-    line = s.add_line(1.0, "mic", s.speakers.assign(emb, 3.0), "shall we start", emb=emb)
-    typed = s.add_line(2.0, "typed", s.speakers.named("You (typed)"), "make Actions a table", kind="typed")
+    held = s.speakers.assign(emb, 3.0)
+    line = s.add_line(1.0, "mic", held, "shall we start")
+    s.add_line(2.0, "typed", s.speakers.named("You (typed)"), "make Actions a table", kind="typed")
     s.save()
     saved = json.loads((s.dir / "session.json").read_text(encoding="utf-8"))
-    assert saved["lines"][0]["emb"] == [round(float(x), 4) for x in emb] and "emb" not in saved["lines"][1]
-    assert "emb" not in typed and "emb" not in s.public_line(line)
+    assert all("emb" not in l for l in saved["lines"])  # session.json is rewritten per utterance: no vector per line
+    assert cos(np.array(saved["speakers"]["pending"][held]), emb) > 0.999
     back = Session.load(tmp_path, s.id)
     assert back.speakers.resolve(line["speaker"]) == UNKNOWN and len(back.speakers.pending) == 1
 
