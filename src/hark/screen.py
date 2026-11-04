@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from .docops import HEADING, _loose
+from .docops import HEADING, _loose, in_working_notes
 
 WAKE = re.compile(r"\b(claude|clawed|claud)\b", re.I)
 # How speech recognition sometimes writes "Claude". Only trusted as the first word of a line.
@@ -34,6 +34,10 @@ FOLLOW = re.compile(r"(?:go back to |start )?follow(?:ing)?(?: along| the (?:con
 SHOW = re.compile(r"(?:let'?s |let us )?(?:have a )?(?:look at|see|go back to|go to|turn to|show us|show me|show|jump to|"
                   r"switch to|skip to|move to|bring up|pull up|put up|open up)\s+(.+)")
 PUT_UP = re.compile(r"put (.+?) (?:up|on (?:the )?screen)")
+# "put this on a slide", "add the methods to the deck", "slide this", "make a slide of that"
+SLIDE = re.compile(r"(?:put|add|stick|pop|turn|get) (.+?) (?:on|onto|in|into|to|as) (?:a |the |our |my )?(?:new )?"
+                   r"(?:slide|slides|deck|powerpoint|presentation)|slide (this|that|it)|make (?:a )?slide (?:out )?of (.+)")
+THIS = {"this", "that", "it", "this one", "that one", "this section", "that section", "what's on screen", "what's on the screen"}
 
 
 def screen_sections(doc: str, mode: str) -> list[str]:
@@ -131,9 +135,10 @@ def match_heading(target: str, doc: str) -> str | None:
 
 
 def screen_request(text: str, doc: str, need_wake: bool = True, mode: str = "outline",
-                   current: str | None = None) -> tuple[str, str | None] | None:
-    """("show", heading line), ("follow", None), or None if this isn't a clear request about the screen.
-    `current` is the section on screen now, for "next section"."""
+                   current: str | None = None, slides: bool = False) -> tuple[str, str | None] | None:
+    """("show", heading line), ("follow", None), ("slide", heading line or None for what's on screen now),
+    or None if this isn't a clear request about the screen. `current` is the section on screen now, for
+    "next section". Slide requests count only when `slides` (a deck can be linked on this computer)."""
     bare = False  # not addressed to Claude: only a sentence that is nothing but navigation counts
     if need_wake:
         end = _wake_end(text)
@@ -149,6 +154,14 @@ def screen_request(text: str, doc: str, need_wake: bool = True, mode: str = "out
         return None
     if FOLLOW.fullmatch(said):
         return ("follow", None)
+    slide = SLIDE.fullmatch(said) if slides else None
+    if slide:
+        target = next(g for g in slide.groups() if g)
+        if target in THIS:
+            return ("slide", None)
+        heading = match_heading(target, doc)
+        # Working notes are never slid; a section that can't be named exactly is left to Claude.
+        return ("slide", heading) if heading and not in_working_notes(doc, heading) else None
     target = said
     m = SHOW.fullmatch(said) or PUT_UP.fullmatch(said)
     if m:

@@ -116,6 +116,24 @@ def _add_section(doc: str, block: str) -> str:
     return "\n".join(lines[:at] + [""] + new + [""] + lines[at:]) + "\n"
 
 
+def headings_above(lines: list[str], start: int) -> list[str]:
+    """Loose keys of the headings a section sits under, nearest first ("### 3. X" under "## Items": ["items"])."""
+    out, level = [], len(HEADING.match(lines[start].strip()).group(1))
+    for i in range(start - 1, -1, -1):
+        m = HEADING.match(lines[i].strip())
+        if m and len(m.group(1)) < level:
+            out.append(_loose(m.group(2)))
+            level = len(m.group(1))
+    return out
+
+
+def in_working_notes(doc: str, heading: str) -> bool:
+    """Is this heading line "## Working notes", or a section inside it? Those are still being weighed."""
+    lines = doc.split("\n")
+    idx = next((i for i, l in enumerate(lines) if l.strip() == heading.strip()), None)
+    return idx is not None and WORKING_NOTES in [_loose(HEADING.match(heading.strip()).group(2))] + headings_above(lines, idx)
+
+
 def _section_span(lines: list[str], heading: str) -> tuple[int, int] | None:
     """(start, end) of the section under `heading`, subsections included."""
     key = _heading_key(heading) if HEADING.match(heading) else _norm(heading)

@@ -122,6 +122,7 @@ The panel beside the document (the **Research** tab; on a phone, the **Research*
 - Say it out loud too: "add that explanation to the background", "add the Sorrell review" or "put those papers in". Claude adds just what was asked for, and the panel marks it as added.
 - **Add** puts one finding into the document and **Add all to document** puts in the lot. Claude places them where they fit. Nothing from research goes into the document until you add it.
 - Untick **Start right away when someone asks out loud** to have spoken requests wait for you to press **Research this**.
+- On Windows, finished results can also go into a PowerPoint deck as slides: see [Adding slides to a PowerPoint deck](#adding-slides-to-a-powerpoint-deck).
 - Everything you looked up stays with the session: **Copy Markdown**, **Download .md** and sharing as a file add a **Research** section after the notes, and the session folder keeps it in `research.md`.
 
 A lookup for sources uses noticeably more of your plan than a document update: roughly as much as 5 to 10 updates. A quick look-up should use less, as it searches less.
@@ -172,13 +173,26 @@ The section then stays on every screen, marked **Held here**, until you press **
 
 While a section is held, Claude treats it as where you're working. Anything that doesn't say where it goes ("add a point about recruitment", "reword that") goes into the held section. In grilling, the held item is the one being discussed. Things that name another place ("put that in the intro") or clearly belong elsewhere (a decision, an action) still go there. The screen stays put, and a note such as "✓ Also changed: Introduction" appears for a few seconds; click it to go there.
 
+### Adding slides to a PowerPoint deck
+
+On Windows, with PowerPoint installed, hark can add slides to a deck you have open, for example the one you're presenting from. The room screen stays as it is; the deck gets only the slides you choose.
+
+- **Link the deck**: **☰ → Link a PowerPoint file…** on the laptop running hark (not on a phone), or start with `hark --pptx path\to\deck.pptx`. The link is saved with the session.
+- **Slide this**: say "Claude, put this on a slide" (or "add that to the deck"), or use **☰ → Slide this** on any device. You get what the room screen shows: an answer that popped up (up to about 30 seconds after it went), otherwise the section on screen. In grilling that's the current question with its suggested answer; in a meeting, the topic with its notes and any decisions that name it. Name a section to slide that instead: "Claude, put the methods on a slide". Requests that clearly name one section are done straight away without a Claude call; vaguer ones go to Claude. Working notes are never put on a slide.
+- **Add to slides** on a finished card in the Research panel adds that card: its title, the answer (shortened), and up to six findings as linked bullets. The card then says *added to slides*, and **Add again** adds another copy.
+- Tick **Add finished results to the linked deck while it's open** to have every finished request for sources, and every answer from your collections, added as it comes in. Quick look-ups and Claude's answers about the meeting are never added by themselves. Results already in the panel aren't added when you tick it.
+- Each slide goes at the end of the deck, using the deck's own layout, with what didn't fit, each finding's note and the original request in the speaker notes. A slide show that's running carries on where it is.
+- hark never saves the deck: the slides stay unsaved until you save, so PowerPoint's **Undo** removes one you didn't want. If the deck isn't open in PowerPoint (or is open read-only), nothing is changed and hark says *deck not open*; open it and try again. A deck kept in OneDrive works too.
+- Elsewhere than Windows, hark shows no slide controls and `--pptx` is ignored.
+
 ## Speakers
 
-Voices are grouped automatically as Speaker 1, Speaker 2 and so on. Claude may fill in real names when it's obvious, for example when someone introduces themselves.
+Voices are grouped automatically as Speaker 1, Speaker 2 and so on. A voice that doesn't match anyone yet is put down as **Unknown** until it has been heard a few times, so that one microphone in a room doesn't invent a new speaker for every other sentence. Claude may fill in real names when it's obvious, for example when someone introduces themselves.
 
 - Click a name chip above the transcript to rename that speaker. The old label or spelling is replaced in the document too. **Giving two speakers the same name merges them.**
 - If someone spells their name out ("Clare, without an i"), Claude corrects it.
-- Click the name on a single transcript line to reassign just that line.
+- **Unknown** is not a person, and often more than one: it's everyone hark hasn't placed yet. It can't be renamed, and nothing is lost by leaving it as it is.
+- Click the name on a single transcript line to reassign just that line. Saying who said an Unknown line also teaches hark that person's voice, so later lines are more likely to land on them. Leave the box blank to put a line back in Unknown.
 - If different people keep getting merged, raise `--speaker-threshold` (default 0.40). If one person keeps getting split, lower it.
 
 ## Where things are saved
@@ -218,7 +232,9 @@ To send the document to someone, use **☰ → Share…**, which opens your phon
 | `--research-model opus` | Claude model for research lookups. The default is the same as `--model`. |
 | `--corpus [NAME=]FOLDER` | Let Claude search a folder of your own documents for this run (see [Your own documents](#your-own-documents)). `--add-corpus FOLDER\|OWNER/REPO` saves a folder or GitHub repo for every run, `--remove-corpus NAME` forgets it. |
 | `--asr parakeet\|moonshine` | Speech model. Parakeet (default) is accurate, adds punctuation and handles 25 European languages. Moonshine is English-only, smaller and faster, for older laptops. |
+| `--threads 2` | How many processor threads transcription may use. The default is half the ones your machine has, up to four, so there is always some left for everything else; a laptop with four ends up with two. Lower it if the rest of the machine goes sluggish while hark listens, raise it if transcription falls behind. Set `HARK_THREADS` to make your choice the default. |
 | `--lan` | Also serve over HTTPS on your network, for your phone. |
+| `--pptx deck.pptx` | Link a PowerPoint deck to add slides to while it's open (Windows only; see [Adding slides to a PowerPoint deck](#adding-slides-to-a-powerpoint-deck)). |
 | `--replay file.m4a` | Feed a recording through as if it were live. Useful for old recordings or for trying hark out. Needs ffmpeg for formats other than WAV. |
 | `--rebuild file.vtt` | Build a new session from a Teams transcript or a hark `transcript.md`, then exit. |
 | `--port 8765` | Local port. The phone port is this plus one. |
@@ -250,7 +266,7 @@ hark never sees your Claude login. It runs your own copy of Claude Code, unchang
 
 ## Privacy
 
-Audio stays on your machine: voice detection, transcription and speaker matching all run locally. Transcript text and the document go to the AI service you chose: Anthropic for your Claude subscription or an Anthropic key, or the provider you set up otherwise. With a local model (Ollama, LM Studio), nothing leaves your machine except research lookups, which aren't available there anyway. When you search a collection, the passages Claude reads from it go to Anthropic too, so think before adding a folder of sensitive documents.
+Audio stays on your machine: voice detection, transcription and speaker matching all run locally. Transcript text and the document go to the AI service you chose: Anthropic for your Claude subscription or an Anthropic key, or the provider you set up otherwise. With a local model (Ollama, LM Studio), nothing leaves your machine except research lookups, which aren't available there anyway. When you search a collection, the passages Claude reads from it go to Anthropic too, so think before adding a folder of sensitive documents. The voice measurements hark uses to tell people apart are saved with each session on your own machine, next to the transcript, and are never sent anywhere.
 
 **Tell people before you start, and get their agreement.** Recording or transcribing a conversation without consent is against the law in some places and against many organisations' policies, and the transcript and document are personal data. Sessions are saved as plain files in `~/Documents/Hark/`, so delete the ones you don't need.
 
@@ -269,7 +285,8 @@ Everything on the speech side uses [sherpa-onnx](https://github.com/k2-fsa/sherp
 - **"Claude couldn't update"**: run `hark --check`. With your subscription, if it says you're logged out, run `claude` and sign in. With an API, run `hark --setup` to check the key, address and model name.
 - **The phone says the microphone is blocked**: open the `https://` link from `hark --lan`, not `http://`.
 - **No call audio**: the share dialog has a separate **Share audio** toggle. Turn it on.
-- **Transcription falls behind** (shown in the status line): try `--asr moonshine`.
+- **Transcription falls behind** (shown in the status line): try `--asr moonshine`, the smaller and faster speech model, or give transcription more of the processor with `--threads 3`.
+- **The rest of the laptop goes sluggish** while hark is listening: `--threads 1` keeps transcription to a single processor thread, which leaves windows, the browser and everything else free. `--asr moonshine` is lighter work again. Both together suit an older two-core laptop.
 
 ## Licence
 

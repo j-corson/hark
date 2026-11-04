@@ -160,6 +160,9 @@ select { background: transparent; border: 1px solid var(--line); border-radius: 
 .rsource { margin: 4px 0 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .rsource a { color: var(--act); text-decoration: none; }
 .rsource a:hover { text-decoration: underline; }
+.rslide { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+.rslide.note { font-style: italic; }
+.autores .deck { color: var(--muted); overflow-wrap: anywhere; }
 .ritems { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 8px; }
 .ritems li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: start; }
 .ritems .t { font-weight: 600; overflow-wrap: anywhere; }
@@ -177,6 +180,7 @@ select { background: transparent; border: 1px solid var(--line); border-radius: 
 .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 99px; padding: 3px 10px 3px 8px; font-size: 14px; }
 .chip::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--c); }
 .chip.auto { color: var(--muted); }
+.chip.unknown { color: var(--muted); border-style: dashed; }
 .transcript { list-style: none; margin: 0; padding: 0; font-size: 15px; line-height: 1.45; }
 .transcript li { padding: 6px 0 6px 10px; border-left: 3px solid var(--c, var(--line)); margin-bottom: 4px; }
 .transcript li.pending { opacity: 1; }

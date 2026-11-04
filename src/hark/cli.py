@@ -211,7 +211,17 @@ def check(args) -> None:
     print("All set. Run `hark` to start.")
 
 
-def main(argv: list[str] | None = None) -> None:
+def thread_count(v: str) -> int:
+    try:
+        n = int(v)
+    except ValueError:
+        n = 0
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"{v!r} is not a thread count: give a whole number, 1 or more")
+    return n
+
+
+def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="hark", description="Listen to a conversation and keep a live document with Claude.")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--mode", choices=list(MODES), help="starting document mode (switchable in the app; default meeting)")
@@ -219,6 +229,9 @@ def main(argv: list[str] | None = None) -> None:
                    help="start from an agenda (Markdown or text, one item per bullet or line); in grilling mode Claude drafts first questions")
     p.add_argument("--issue", action="append", default=[], metavar="OWNER/REPO#N",
                    help="grill a GitHub issue (or its link); repeatable. Implies --mode grill, and needs the GitHub CLI (gh), logged in")
+    p.add_argument("--pptx", metavar="DECK", type=Path,
+                   help="link a PowerPoint deck: research results and room-screen sections can be added to it as slides "
+                        "while it's open (Windows only)")
     p.add_argument("--lan", action="store_true", help="also serve over HTTPS on your local network (to use a phone)")
     p.add_argument("--setup", action="store_true", help="choose which AI service hark uses (your Claude subscription, or an API key), then exit")
     p.add_argument("--provider", choices=PROVIDERS,
@@ -236,6 +249,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--effort", default="low", help="Claude effort level (low/medium/high); low keeps updates quick")
     p.add_argument("--asr", default=os.environ.get("HARK_ASR", "parakeet"), choices=["parakeet", "moonshine"],
                    help="speech model: parakeet (accurate, multilingual) or moonshine (faster, English)")
+    p.add_argument("--threads", type=thread_count, default=os.environ.get("HARK_THREADS"),
+                   help="CPU threads for speech recognition (default: half your logical cores, leaving the rest of the machine responsive)")
     p.add_argument("--speaker-threshold", type=float, default=0.40,
                    help="voice similarity needed to count as the same speaker (raise if people get merged, lower if one person is split)")
     p.add_argument("--data-dir", type=Path, default=default_data_dir(), help="where sessions are saved (default ~/Documents/Hark)")
@@ -248,7 +263,11 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--new-key", action="store_true",
                    help="replace the access key so old links and signed-in browsers stop working, then exit")
     p.add_argument("--version", action="version", version=f"hark {__version__}")
-    args = p.parse_args(argv)
+    return p
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parser().parse_args(argv)
     mode_given, args.mode = args.mode, args.mode or "meeting"
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
@@ -299,7 +318,7 @@ def main(argv: list[str] | None = None) -> None:
     from .hub import Hub
     from .server import make_app
 
-    engine = Engine(args.asr)
+    engine = Engine(args.asr, args.threads)
     scribe, cfg = build_scribe(args)
     if not scribe.available:
         print(f"\n  ! {scribe.problem}\n    Transcripts will work but the document won't update.\n", file=sys.stderr)
@@ -311,6 +330,13 @@ def main(argv: list[str] | None = None) -> None:
     hub = Hub(engine, scribe, args.data_dir, args.speaker_threshold, Researcher(scribe, cfg["research_model"], corpora=library),
               gh=GhRunner())
     hub.session.set_mode(args.mode)
+    if args.pptx:
+        if not hub.deck.available:
+            print("  ! PowerPoint linking is Windows-only; ignoring --pptx.", file=sys.stderr)
+        else:
+            hub.session.pptx = str(args.pptx.resolve())
+            if not args.pptx.is_file():
+                print(f"  ! No such file yet: {hub.session.pptx}. hark will add slides once it exists and is open.", file=sys.stderr)
     key = token()
     app = make_app(hub, key)
 
@@ -342,6 +368,8 @@ def main(argv: list[str] | None = None) -> None:
         print(f"\n  hark is running. Open:  {local}", flush=True)
         if scribe.available:
             print(f"  Documents are written by {scribe.model} via {scribe.backend.label}.", flush=True)
+        if hub.session.pptx:
+            print(f"  Slides go to {hub.session.pptx} while it's open in PowerPoint.", flush=True)
         if corpora and hub.researcher.corpus_ok:
             print(f"  Collections Claude can search: {', '.join(c.name for c in corpora)}", flush=True)
             corpus_prep = asyncio.get_running_loop().create_task(prepare_corpora(corpora))  # noqa: F841 (kept so it isn't collected)
