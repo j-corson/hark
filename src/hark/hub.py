@@ -1006,8 +1006,10 @@ class Hub:
             target = s.speakers.named(name) if name else UNKNOWN
             for l in s.lines:
                 if l["id"] == msg.get("line"):
-                    if s.speakers.resolve(l["speaker"]) == UNKNOWN:
-                        s.speakers.claim(target, l["speaker"], l.get("emb"))
+                    # A line given by hand is that speaker's for good, so claim them either way;
+                    # only a line out of Unknown teaches them a voice.
+                    held = s.speakers.resolve(l["speaker"]) == UNKNOWN
+                    s.speakers.claim(target, l["speaker"] if held else None, l.get("emb") if held else None)
                     l["speaker"], l["manual"] = target, True
             s.save()
             await self.push_state()

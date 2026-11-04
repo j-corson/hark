@@ -128,6 +128,15 @@ def test_a_name_or_a_line_the_user_gave_is_never_merged_automatically():
     assert sp.resolve(theirs) == theirs
 
 
+def test_giving_two_speakers_the_same_name_merges_them():
+    rng = np.random.default_rng(37)
+    sp = Speakers()
+    ana, mike = profile(sp, voice(rng), 4), profile(sp, voice(rng), 2)
+    sp.rename(ana, "Ana")
+    kept = sp.rename(mike, "ana")  # the same name, spelt as they typed it
+    assert kept == ana and sp.resolve(mike) == ana and sp.items[ana]["n"] == 6
+
+
 def test_unknown_is_not_a_person_so_it_cannot_be_renamed_or_merged():
     rng = np.random.default_rng(13)
     sp = Speakers()
@@ -172,6 +181,23 @@ def test_saying_who_said_a_line_teaches_that_speakers_voice(tmp_path):
         assert s.speakers.resolve(line["speaker"]) == mike  # a promotion later on doesn't take the line back
         await hub.handle(ws, {"type": "reassign", "line": line["id"], "name": ""})
         assert line["speaker"] == UNKNOWN and s.speaker_notes() == [UNKNOWN_NOTE]
+
+    asyncio.run(go())
+
+
+def test_a_line_given_to_a_speaker_by_hand_stays_with_them(tmp_path):
+    rng = np.random.default_rng(41)
+    a = voice(rng)
+    s = Session(tmp_path)
+    grown = profile(s.speakers, a, 20)
+    small = profile(s.speakers, like(a, rng, 0.45), 1)  # the same person, heard faintly once
+    line = s.add_line(1.0, "mic", grown, "shall we start")
+    hub, ws = make_hub(tmp_path, s)
+
+    async def go():
+        await hub.handle(ws, {"type": "reassign", "line": line["id"], "name": s.speakers.name(small)})
+        s.speakers.assign(said(a, rng, 0.7), 3.0)  # the firmer profile would otherwise take that small one in
+        assert s.speakers.resolve(line["speaker"]) == small and line["manual"] is True
 
     asyncio.run(go())
 
