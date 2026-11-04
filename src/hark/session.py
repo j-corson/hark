@@ -19,7 +19,7 @@ from pathlib import Path
 
 from .docops import tidy
 from .modes import DEFAULT_MODE, MODES
-from .speakers import Speakers
+from .speakers import UNKNOWN, UNKNOWN_NOTE, Speakers
 
 HISTORY = 100
 
@@ -105,8 +105,11 @@ class Session:
         self._record("undo")
         return True
 
-    def add_line(self, t: float, source: str, speaker: str, text: str, kind: str = "speech") -> dict:
+    def add_line(self, t: float, source: str, speaker: str, text: str, kind: str = "speech", emb=None) -> dict:
         line = {"id": self._next_line, "t": t, "added": time.time(), "source": source, "speaker": speaker, "text": text, "kind": kind}
+        if emb is not None:
+            # Kept with the line so a meeting can be put through the clustering again later.
+            line["emb"] = [round(float(x), 4) for x in emb]
         self._next_line += 1
         self.lines.append(line)
         return line
@@ -145,7 +148,8 @@ class Session:
 
     def speaker_notes(self) -> list[str]:
         used = {self.speakers.resolve(l["speaker"]) for l in self.lines if l["kind"] == "speech"}
-        return [f"{sp['name']}" + (" (auto label)" if sp["auto"] else "") for sid, sp in self.speakers.items.items() if sid in used]
+        return [UNKNOWN_NOTE if sid == UNKNOWN else f"{sp['name']}" + (" (auto label)" if sp["auto"] else "")
+                for sid, sp in self.speakers.items.items() if sid in used]
 
     # -- views --------------------------------------------------------------
     def public_line(self, l: dict) -> dict:

@@ -177,11 +177,12 @@ On Windows, with PowerPoint installed, hark can add slides to a deck you have op
 
 ## Speakers
 
-Voices are grouped automatically as Speaker 1, Speaker 2 and so on. Claude may fill in real names when it's obvious, for example when someone introduces themselves.
+Voices are grouped automatically as Speaker 1, Speaker 2 and so on. A voice that doesn't match anyone yet is put down as **Unknown** until it has been heard a few times, so that one microphone in a room doesn't invent a new speaker for every other sentence. Claude may fill in real names when it's obvious, for example when someone introduces themselves.
 
 - Click a name chip above the transcript to rename that speaker. The old label or spelling is replaced in the document too. **Giving two speakers the same name merges them.**
 - If someone spells their name out ("Clare, without an i"), Claude corrects it.
-- Click the name on a single transcript line to reassign just that line.
+- **Unknown** is not a person, and often more than one: it's everyone hark hasn't placed yet. It can't be renamed, and nothing is lost by leaving it as it is.
+- Click the name on a single transcript line to reassign just that line. Saying who said an Unknown line also teaches hark that person's voice, so later lines are more likely to land on them. Leave the box blank to put a line back in Unknown.
 - If different people keep getting merged, raise `--speaker-threshold` (default 0.40). If one person keeps getting split, lower it.
 
 ## Where things are saved
@@ -254,7 +255,7 @@ hark never sees your Claude login. It runs your own copy of Claude Code, unchang
 
 ## Privacy
 
-Audio stays on your machine: voice detection, transcription and speaker matching all run locally. Transcript text and the document go to the AI service you chose: Anthropic for your Claude subscription or an Anthropic key, or the provider you set up otherwise. With a local model (Ollama, LM Studio), nothing leaves your machine except research lookups, which aren't available there anyway. When you search a collection, the passages Claude reads from it go to Anthropic too, so think before adding a folder of sensitive documents.
+Audio stays on your machine: voice detection, transcription and speaker matching all run locally. Transcript text and the document go to the AI service you chose: Anthropic for your Claude subscription or an Anthropic key, or the provider you set up otherwise. With a local model (Ollama, LM Studio), nothing leaves your machine except research lookups, which aren't available there anyway. When you search a collection, the passages Claude reads from it go to Anthropic too, so think before adding a folder of sensitive documents. The voice measurements hark uses to tell people apart are saved with each session on your own machine, next to the transcript, and are never sent anywhere.
 
 **Tell people before you start, and get their agreement.** Recording or transcribing a conversation without consent is against the law in some places and against many organisations' policies, and the transcript and document are personal data. Sessions are saved as plain files in `~/Documents/Hark/`, so delete the ones you don't need.
 
