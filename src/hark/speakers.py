@@ -236,7 +236,7 @@ class Speakers:
             "next_held": self._next_held,
             "alias": self.alias,
             "items": {sid: {"name": sp["name"], "auto": sp["auto"], "n": sp["n"], "pinned": sp["pinned"], "sum": None if sp["sum"] is None else sp["sum"].round(5).tolist()} for sid, sp in self.items.items()},
-            "pending": {tid: [round(float(x), 4) for x in emb] for tid, emb in self.pending.items()},
+            "pending": {tid: emb.astype(np.float64).round(4).tolist() for tid, emb in self.pending.items()},
         }
 
     def load_json(self, d: dict) -> None:
