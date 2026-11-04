@@ -1009,6 +1009,8 @@ class Hub:
                     # A line given by hand is that speaker's for good, so claim them either way;
                     # only a line out of Unknown teaches them a voice, the one Unknown held for it.
                     held = s.speakers.resolve(l["speaker"]) == UNKNOWN
+                    if held and target == UNKNOWN:
+                        break  # already Unknown and left blank: nothing was said, so nothing changes
                     s.speakers.claim(target, l["speaker"] if held else None)
                     l["speaker"] = target
             s.save()

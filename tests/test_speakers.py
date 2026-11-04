@@ -184,6 +184,25 @@ def test_saying_who_said_a_line_teaches_that_speakers_voice(tmp_path):
     asyncio.run(go())
 
 
+def test_leaving_an_unknown_line_unknown_keeps_the_voice_it_was_holding(tmp_path):
+    rng = np.random.default_rng(43)
+    a = voice(rng)
+    s = Session(tmp_path)
+    line = s.add_line(1.0, "mic", s.speakers.assign(said(a, rng, 0.7), 3.0), "shall we start")
+    hub, ws = make_hub(tmp_path, s)
+
+    async def go():
+        # Clicking the name on an Unknown line and leaving the box blank says nothing about it.
+        await hub.handle(ws, {"type": "reassign", "line": line["id"], "name": ""})
+        assert len(s.speakers.pending) == 1  # its voice is still held, so it still counts towards a promotion
+        for _ in range(PROMOTE_AT - 1):
+            s.speakers.assign(said(a, rng, 0.7), 3.0)
+        mike = s.speakers.resolve(line["speaker"])
+        assert mike != UNKNOWN and s.speakers.items[mike]["n"] == PROMOTE_AT
+
+    asyncio.run(go())
+
+
 def test_a_line_given_to_a_speaker_by_hand_stays_with_them(tmp_path):
     rng = np.random.default_rng(41)
     a = voice(rng)

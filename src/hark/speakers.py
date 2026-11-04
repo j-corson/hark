@@ -195,10 +195,10 @@ class Speakers:
         The voice is the one Unknown was already holding for that utterance; a line with nothing
         held for it (rebuilt, or handed straight from one speaker to another) teaches no voice.
         """
-        emb = self.pending.pop(was, None)
         sid = self.resolve(sid)
         if sid == UNKNOWN or sid not in self.items:
-            return sid
+            return sid  # nobody took it: leave the voice held, so it can still be promoted later
+        emb = self.pending.pop(was, None)
         self.items[sid]["pinned"] = True
         if emb is None:
             return sid
