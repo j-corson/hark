@@ -154,14 +154,16 @@ def _norm_path(p: str) -> str:
     return re.sub(r"/+", "/", str(p or "").replace("\\", "/")).rstrip("/").lower()
 
 
-def match_deck(linked: str, open_fullnames: list[str], onedrive_root: str | None = None) -> str | None:
+def match_deck(linked: str, open_fullnames: list[str], onedrive_roots: str | list[str] | None = None) -> str | None:
     """Which open presentation (by PowerPoint's FullName) is the linked deck, if any.
 
     A deck in OneDrive shows its web address as its FullName, so it matches by its place
-    inside OneDrive (folders and name), never by its file name alone."""
+    inside OneDrive (folders and name), never by its file name alone. A computer signed in
+    to both a personal and a work OneDrive has two local folders: either can hold the deck."""
     want = _norm_path(linked)
-    root = _norm_path(onedrive_root) if onedrive_root else ""
-    tail = want[len(root) + 1:] if root and want.startswith(root + "/") else ""
+    roots = [onedrive_roots] if isinstance(onedrive_roots, str) else onedrive_roots or []
+    tails = [want[len(r) + 1:] for r in map(_norm_path, roots) if r and want.startswith(r + "/")]
+    tail = max(tails, key=len, default="")  # the innermost folder, should one sit inside another
     for name in open_fullnames:
         if _norm_path(name) == want:
             return name
@@ -315,13 +317,21 @@ async def powershell(script: str, payload: dict, timeout: float = TIMEOUT, sta: 
     raise SlidesError(clean(err.decode("utf-8", "replace"), 200) or "PowerShell gave no answer")
 
 
+def onedrive_folders() -> list[str]:
+    """This computer's local OneDrive folders. OneDrive names the work one OneDriveCommercial
+    and the personal one OneDriveConsumer; OneDrive is whichever was set up first."""
+    found = [os.environ.get(k) for k in ("OneDriveConsumer", "OneDriveCommercial", "OneDrive")]
+    return list(dict.fromkeys(f for f in found if f))
+
+
 class Deck:
     """The linked deck, as PowerPoint has it open. `run` runs a script (stubbed in tests)."""
 
     def __init__(self, run=None, available: bool | None = None, onedrive: str | None = None, sleep=asyncio.sleep):
         self.run = run or powershell
         self.available = on_windows() if available is None else available
-        self.onedrive = onedrive or os.environ.get("OneDrive")  # the local OneDrive folder, for decks opened from it
+        # The local OneDrive folders (personal and work), for decks opened from them.
+        self.onedrive = [onedrive] if onedrive else onedrive_folders()
         self.sleep = sleep
 
     async def add(self, linked: str | None, slide: dict) -> str | None:
