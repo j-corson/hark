@@ -157,6 +157,25 @@ def test_onedrive_deck_matches_by_its_place_in_onedrive_not_its_name():
     assert match_deck(linked, [url], None) is None
 
 
+def test_onedrive_deck_matches_from_either_onedrive_when_signed_in_to_both():
+    # A work OneDrive set up first takes %OneDrive%, but the deck sits in the personal one.
+    work, personal = r"C:\Users\jamie\OneDrive - Contoso", r"C:\Users\jamie\OneDrive"
+    linked = personal + r"\Desktop\Grilling.pptx"
+    url = "https://d.docs.live.net/de19cb/Desktop/Grilling.pptx"
+    assert match_deck(linked, [url], work) is None
+    assert match_deck(linked, [url], [work, personal]) == url
+    assert match_deck(linked, [url], [personal, work]) == url
+
+
+def test_deck_knows_both_onedrive_folders(monkeypatch):
+    from hark.slides import Deck
+    monkeypatch.setenv("OneDrive", r"C:\Users\jamie\OneDrive - Contoso")
+    monkeypatch.setenv("OneDriveCommercial", r"C:\Users\jamie\OneDrive - Contoso")
+    monkeypatch.setenv("OneDriveConsumer", r"C:\Users\jamie\OneDrive")
+    assert Deck(available=True).onedrive == [r"C:\Users\jamie\OneDrive", r"C:\Users\jamie\OneDrive - Contoso"]
+    assert Deck(available=True, onedrive=r"D:\Elsewhere").onedrive == [r"D:\Elsewhere"]
+
+
 # -- "Claude, put this on a slide" ------------------------------------------------------------
 
 from hark.screen import screen_request  # noqa: E402
