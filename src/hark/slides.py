@@ -103,29 +103,68 @@ def _fit(title: str, body: list[dict], notes: list[str]) -> dict:
     return {"title": title, "body": body[:MAX_LINES], "notes": "\n".join(over + notes + ["from hark (room screen)"])}
 
 
-def _grill_slide(lines: list[str], title: str) -> dict:
-    """A grilling item: its first open question and the suggested answer, or else its fields."""
-    fields, qs, in_q = [], [], False
+def _questions(lines: list[str]) -> list[dict]:
+    """A grilling item's open questions: label, title, the question, its options and the suggested answer.
+
+    A question is a bullet `**Q2. Title**: question ➡️ Suggested: answer`; bullets indented under it
+    are its options (`**A.** option: trade-off`), or the suggestion if one starts with ➡️."""
+    qs, in_q = [], False
     for line in lines:
         m = HEADING.match(line.strip())
         if m:
             in_q = "open questions" in _loose(m.group(2))
             continue
         b = BULLET.match(line)
-        if not b:
+        if not in_q or not b:
             continue
-        if in_q:
-            q = QUESTION.match(b.group(2))
-            text = q.group(3) if q else b.group(2)
-            ask, sugg = (re.split(r"➡️|=>|→", text, maxsplit=1) + [""])[:2]
-            qs.append((_plain(ask)[0], _plain(re.sub(r"^\s*suggested:?\s*", "", sugg, flags=re.I))[0]))
-        elif not re.match(r"^\*\*status", b.group(2), re.I):
-            fields.append(_line(_plain(b.group(2))[0]))
-    if not qs:
-        return _fit(title, fields, [])
-    (ask, sugg), more = qs[0], qs[1:]
-    notes = [f"Item: {title}"] + [f"Also open: {q}" for q, _ in more]
-    return _fit(ask, [_line(f"Suggested: {sugg}")] if sugg else [], notes)
+        text = b.group(2)
+        if b.group(1) and qs:  # indented: belongs to the question above
+            if re.match(r"^\s*(?:➡️|=>|→)", text):
+                qs[-1]["sugg"] = _plain(re.sub(r"^\s*(?:➡️|=>|→)\s*(?:suggested:?\s*)?", "", text, flags=re.I))[0]
+            else:
+                qs[-1]["options"].append(_plain(text)[0])
+            continue
+        q = QUESTION.match(text)
+        label, title, rest = (q.group(1), q.group(2).strip(), q.group(3)) if q else ("", "", text)
+        ask, sugg = (re.split(r"➡️|=>|→", rest, maxsplit=1) + [""])[:2]
+        qs.append({"label": label, "title": title, "ask": _plain(ask)[0],
+                   "sugg": _plain(re.sub(r"^\s*suggested:?\s*", "", sugg, flags=re.I))[0], "options": []})
+    return qs
+
+
+def _question_slide(item: str, q: dict) -> dict:
+    """One open question on its own slide: the question, its options, then the suggested answer."""
+    body = [_line(o) for o in q["options"]] + ([_line(f"Suggested: {q['sugg']}")] if q["sugg"] else [])
+    name = f"{q['label']}. {q['title']}" if q["label"] and q["title"] else q["label"]
+    return _fit(q["ask"], body, [f"Item: {item}" + (f" · {name}" if name else "")])
+
+
+def _grill_slides(lines: list[str], title: str, question: str | None = None) -> list[dict]:
+    """A grilling item: one slide per open question (or just the one asked for), or else its fields."""
+    qs = _questions(lines)
+    if question:
+        want = re.sub(r"[^a-z0-9]", "", question.lower())
+        return [_question_slide(title, q) for q in qs if want in (re.sub(r"[^a-z0-9]", "", q["label"].lower()),
+                                                                  re.sub(r"[^a-z0-9]", "", f"{q['label']}{q['title']}".lower()))]
+    if qs:
+        return [_question_slide(title, q) for q in qs]
+    fields = [_line(_plain(b.group(2))[0]) for b in map(BULLET.match, lines)
+              if b and not b.group(1) and not re.match(r"^\*\*status", b.group(2), re.I)]
+    return [_fit(title, fields, [])]
+
+
+def section_slides(doc: str, heading: str | None, mode: str, question: str | None = None) -> list[dict]:
+    """Slides for a section, as the room screen shows it: a grilling item gives one per open question
+    (`question`, e.g. "Q2", picks one). Empty for a missing section, one in Working notes, or no such question."""
+    found = find_heading(doc, heading)
+    if not found or in_working_notes(doc, found):
+        return []  # Working notes are still being weighed: not for the room
+    lines, start, end = _section(doc, found)
+    m = HEADING.match(found)
+    if mode == "grill" and len(m.group(1)) == 3 and headings_above(lines, start)[:1] == ["items"]:
+        return _grill_slides(lines[start + 1:end], re.sub(r"^\d+[.)]\s*", "", _plain(m.group(2))[0]), question)
+    one = section_slide(doc, found, mode)
+    return [one] if one else []
 
 
 def section_slide(doc: str, heading: str | None, mode: str) -> dict | None:
@@ -139,7 +178,7 @@ def section_slide(doc: str, heading: str | None, mode: str) -> dict | None:
     title = _plain(m.group(2))[0]
     inside = lines[start + 1:end]
     if mode == "grill" and level == 3 and parent == ["items"]:
-        return _grill_slide(inside, re.sub(r"^\d+[.)]\s*", "", title))
+        return (_grill_slides(inside, re.sub(r"^\d+[.)]\s*", "", title)) or [None])[0]
     body = _bullets(inside, level)
     decisions = find_heading(doc, "## Decisions")
     if mode == "meeting" and level == 3 and parent == ["discussion"] and decisions:

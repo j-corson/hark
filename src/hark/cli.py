@@ -127,7 +127,8 @@ def build_scribe(args):
     from .scribe import Scribe
     cfg = resolve(args)
     backend = make_backend(cfg["provider"], cfg["model"], cfg["base_url"], cfg["api_key"])
-    return Scribe(backend, args.effort), cfg
+    from .live import make_live
+    return Scribe(backend, args.effort, make_live(backend, args.effort)), cfg
 
 
 def build_corpora(args):

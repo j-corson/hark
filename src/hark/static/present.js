@@ -219,13 +219,21 @@
       if (inQ) {
         if (!/^\s*[-*+]\s+/.test(l)) continue;
         const body = l.replace(/^\s*[-*+]\s+/, "");
+        const last = out.qs[out.qs.length - 1];
+        if (/^\s/.test(l) && last) {  // indented under a question: one of its options, or its suggestion
+          const sg = body.match(/^(?:➡️|=>|→)\s*(?:suggested:?\s*)?(.*)$/i);
+          if (sg) last.sugg = sg[1].trim();
+          else last.options.push(body.trim());
+          last.sub.push(l);
+          continue;
+        }
         const m = body.match(/^\*\*(Q\d+)\.?\s*([^*]*?):?\*\*:?\s*(.*)$/);
         let id = "", title = "", rest = body;
         if (m) { id = m[1]; title = m[2]; rest = m[3]; }
         const disp = rest.match(/\(disputed:\s*([^)]*)\)/i);
         if (disp) rest = rest.replace(disp[0], " ");
         const [q, s] = rest.split(/➡️|=>|→/);
-        out.qs.push({ id, title, q: q.trim(), sugg: (s || "").replace(/^\s*suggested:?\s*/i, "").trim(), disputed: disp ? disp[1].trim() : "", line: l });
+        out.qs.push({ id, title, q: q.trim(), sugg: (s || "").replace(/^\s*suggested:?\s*/i, "").trim(), disputed: disp ? disp[1].trim() : "", options: [], sub: [], line: l });
         continue;
       }
       const f = l.match(/^\s*[-*+]\s+\*\*([^*]+?):?\*\*:?\s*(.*)$/);
@@ -246,10 +254,11 @@
     let html = `<p class="kicker">Item ${num} of ${nav.length}${status}</p><h1>${inline(title)}</h1>`;
     const [q, ...more] = it.qs;
     if (q) {
-      html += `<div class="q${freshAttr([q.line])}">` +
+      html += `<div class="q${freshAttr([q.line, ...q.sub])}">` +
         `<p class="qlabel">${q.id ? `${q.id}${q.title ? " · " + inline(q.title) : ""}` : "Open question"}` +
         (it.qs.length > 1 ? ` <span>1 of ${it.qs.length} open</span>` : "") + "</p>" +
         `<p class="qtext">${inline(q.q)}</p>` +
+        (q.options.length ? '<ul class="opts">' + q.options.map((o) => `<li>${inline(o)}</li>`).join("") + "</ul>" : "") +
         (q.sugg ? `<p class="sugg"><span>Suggested</span> ${inline(q.sugg)}</p>` : "") +
         (q.disputed ? `<p class="disputed"><span>Disputed</span> ${inline(q.disputed)}</p>`
           : q.sugg ? '<p class="hint">Say “yes” to accept, or give another answer.</p>' : "") +

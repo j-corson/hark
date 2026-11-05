@@ -487,3 +487,58 @@ def test_only_this_computer_may_link_a_deck(tmp_path):
         assert state["can_link"] is local
     assert len(picked) == 1 and hub.session.pptx == str(tmp_path / "New.pptx")
     assert any("Linked New.pptx" in t for t in ws.toasts())
+
+
+# -- grilling: a slide per open question ---------------------------------------------------------
+
+from hark.slides import section_slides  # noqa: E402
+
+GRILL_OPTIONS = """# Backlog
+
+## Items
+### 1. Pilot definition
+- **Question**: What is a Pilot?
+- **Status**: being grilled
+#### Open questions
+- **Q1. Finished definition**: What should exist when this counts as answered? ➡️ Suggested: a one-page definition.
+  - **A.** One-page definition: concrete, needs sign-off
+  - **B.** Agreed in discussion only: quick, easily forgotten
+- **Q2. Track**: Quick look or full spec? ➡️ Suggested: spec tightly.
+  - **A.** Explore: fast
+  - **B.** Spec tightly: slower
+- **Q3. Budget**: What is the cap per Pilot?
+  - ➡️ Suggested: one day of agent time.
+"""
+
+
+def test_grilling_item_gives_a_slide_per_question_with_its_options():
+    got = section_slides(GRILL_OPTIONS, "### 1. Pilot definition", "grill")
+    assert [s["title"] for s in got] == ["What should exist when this counts as answered?", "Quick look or full spec?",
+                                         "What is the cap per Pilot?"]
+    assert [b["text"] for b in got[0]["body"]] == ["A. One-page definition: concrete, needs sign-off",
+                                                   "B. Agreed in discussion only: quick, easily forgotten",
+                                                   "Suggested: a one-page definition."]
+    assert [b["text"] for b in got[2]["body"]] == ["Suggested: one day of agent time."]  # a suggestion bullet works too
+    assert "Item: Pilot definition · Q1. Finished definition" in got[0]["notes"]
+
+
+def test_one_question_can_be_picked_by_its_label():
+    assert [s["title"] for s in section_slides(GRILL_OPTIONS, "### 1. Pilot definition", "grill", "Q2")] == ["Quick look or full spec?"]
+    assert [s["title"] for s in section_slides(GRILL_OPTIONS, "### 1. Pilot definition", "grill", "q2.")] == ["Quick look or full spec?"]
+    assert section_slides(GRILL_OPTIONS, "### 1. Pilot definition", "grill", "Q9") == []
+    assert len(section_slides(GRILL_OPTIONS, "## Items", "grill")) == 1  # not an item: the section as it is
+
+
+def test_claude_can_slide_one_question_of_the_item_on_screen(tmp_path):
+    hub, ws = slide_hub(tmp_path)
+    s = hub.session
+    s.mode = "grill"
+    s.set_doc(GRILL_OPTIONS, by="claude")
+    s.stage = "### 1. Pilot definition"
+    asyncio.run(hub.slide_this(s, None, "claude", question="Q2"))
+    assert [x["title"] for x in hub.deck.added] == ["Quick look or full spec?"]
+    assert "✓ Added Q2 of 1. Pilot definition to slides" in ws.toasts()
+    asyncio.run(hub.slide_this(s, "### 1. Pilot definition", "claude"))
+    assert len(hub.deck.added) == 4 and "✓ Added 1. Pilot definition (3 questions, a slide each) to slides" in ws.toasts()
+    asyncio.run(hub.slide_this(s, None, "claude", question="Q7"))
+    assert "1. Pilot definition has no open question Q7 to put on a slide." in ws.toasts()

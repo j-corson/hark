@@ -75,6 +75,8 @@ button { font: inherit; color: inherit; cursor: pointer; border: 0; background: 
 .qlabel span { color: var(--muted); margin-left: .6em; }
 .qtext { margin: .15em 0 .4em; font-size: 1.35em; line-height: 1.25; font-weight: 600; }
 .sugg, .disputed, .lookups { margin: .2em 0; }
+.opts { margin: .1em 0 .5em; padding-left: 1.1em; font-size: .9em; }
+.opts li { margin: .15em 0; }
 .sugg span, .disputed span, .lookups span { font-size: .62em; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-right: .4em; }
 .disputed span { color: var(--warn); }
 .hint { margin: .5em 0 0; font-size: .7em; color: var(--muted); }

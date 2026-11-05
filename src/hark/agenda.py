@@ -33,12 +33,12 @@ _ENDS = re.compile(r"^(?:\*\*)?(?:ends?|end time|finish(?:es)?|finish time)(?:\*
 MAX_ITEMS = 60
 MAX_CHARS = 20000
 
-PREP_SYSTEM = """You prepare the document a grilling session will start from, before anyone has spoken. You receive the <brief> the live session follows and the <agenda>: the ideas people put forward, in their own words.
+PREP_SYSTEM = """You prepare the document a grilling session will start from, before anyone has spoken. You receive the <brief> the live session follows, the <grilling_skill> it runs, and the <agenda>: the ideas people put forward, in their own words.
 
 Return the whole document in `document`, laid out as the brief describes:
 - An H1 title: the agenda's own title if it has one, otherwise a short descriptive one.
 - Every agenda item, in agenda order, as a numbered ### item under "## Items" with all the brief's fields. Fill a field only from what the agenda says, keeping people's wording; otherwise "?". Status: not started. Keep the agenda's notes on an item as extra bullets after its fields. Lose no item and no note.
-- Under every item, "#### Open questions" with its first round: up to 3 questions that can be answered now, most important first, in the brief's format, each with your suggested answer. Start with whatever decides Question, Track and Done when.
+- Under every item, "#### Open questions" with its first round, as the grilling skill and the brief describe: every question that can be answered now, most important first, in the brief's format (options included), each with your suggested answer. Start with whatever decides Question, Track and Done when.
 - Facts the group shouldn't have to decide (whether a dataset is public, where to get it, its size or licence) go under the item as `- Look up: ...`, not as questions.
 - If <aims> is present, "## Aims" right after the title, with each aim as `- [ ] aim`, in the user's words.
 - "## Shared terms" (with any term the agenda clearly uses in more than one sense, as a question under the item where it matters) and "## Parked", empty if there is nothing for them.
@@ -62,11 +62,11 @@ PREP_SCHEMA = {
 }
 
 
-ITEM_PREP_SYSTEM = """You prepare new items that were just added to a grilling session already under way. You receive the <brief> the live session follows, the <document> as it stands (for context: titles, shared terms, what is already settled) and <new_items>: each new item's section as it is in the document, with the GitHub issue it came from.
+ITEM_PREP_SYSTEM = """You prepare new items that were just added to a grilling session already under way. You receive the <brief> the live session follows, the <grilling_skill> it runs, the <document> as it stands (for context: titles, shared terms, what is already settled) and <new_items>: each new item's section as it is in the document, with the GitHub issue it came from.
 
 For each new item, return {"ref": "<its Issue ref>", "section": "<the item's whole section>"} in `items`, laid out as the brief describes:
 - Start with the item's ### heading line exactly as given, then `- **Issue**: owner/repo#N` exactly as given, as the first field, then all the brief's fields. Fill a field only from what the issue says, keeping its wording; otherwise "?". Status: not started.
-- Then "#### Open questions" with its first round: up to 3 questions that can be answered now, most important first, in the brief's format, each with your suggested answer. Start with whatever decides Question, Track and Done when.
+- Then "#### Open questions" with its first round, as the grilling skill and the brief describe: every question that can be answered now, most important first, in the brief's format (options included), each with your suggested answer. Start with whatever decides Question, Track and Done when.
 - Facts the group shouldn't have to decide go under the item as `- Look up: ...`, not as questions.
 Return only the new items. Don't touch, repeat or refer to other items. Don't invent facts, and don't copy the issue's text in wholesale.
 
@@ -221,9 +221,14 @@ def issue_text(issue: dict) -> str:
     return f'<issue ref="{issue["ref"]}" title="{title}">\n{body}\n</issue>'
 
 
+def _skill(text: str) -> list[str]:
+    """The grilling skill the brief runs, as a prompt part (none if there's no skill text)."""
+    return [f"<grilling_skill>\n{text.strip()}\n</grilling_skill>"] if text else []
+
+
 def build_prep_prompt(brief: str, agenda: str, aims: list[str] | None = None, issues: list[dict] | None = None,
-                      document: str = "") -> str:
-    parts = [f"<brief>\n{brief.strip()}\n</brief>", f"<agenda>\n{agenda.strip()[:MAX_CHARS]}\n</agenda>"]
+                      document: str = "", skill: str = "") -> str:
+    parts = [f"<brief>\n{brief.strip()}\n</brief>", *_skill(skill), f"<agenda>\n{agenda.strip()[:MAX_CHARS]}\n</agenda>"]
     if aims:
         parts.append("<aims>\n" + "\n".join(f"- {a}" for a in aims) + "\n</aims>")
     if issues:
@@ -232,8 +237,8 @@ def build_prep_prompt(brief: str, agenda: str, aims: list[str] | None = None, is
     return "\n\n".join(parts + ["Return the prepared document."])
 
 
-def build_item_prep_prompt(brief: str, document: str, new: list[tuple[str, dict]]) -> str:
+def build_item_prep_prompt(brief: str, document: str, new: list[tuple[str, dict]], skill: str = "") -> str:
     """Prep for items added mid-session: `new` is [(the item's section as added, its issue)]."""
     items = "\n\n".join(f"{section}\n{issue_text(issue)}" for section, issue in new)
-    return "\n\n".join([f"<brief>\n{brief.strip()}\n</brief>", f"<document>\n{document.strip()[:MAX_CHARS]}\n</document>",
+    return "\n\n".join([f"<brief>\n{brief.strip()}\n</brief>", *_skill(skill), f"<document>\n{document.strip()[:MAX_CHARS]}\n</document>",
                         f"<new_items>\n{items}\n</new_items>", "Return the new items."])

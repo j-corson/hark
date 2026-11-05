@@ -4,7 +4,7 @@ hark listens to a conversation and keeps a live, structured document you can gla
 
 - **Meeting** mode keeps a running summary, decisions, actions and open questions.
 - **Co-writing** mode builds the document you're dictating or working out together, such as a paper outline or a list of interview questions. It keeps only what you settle on. Ideas still being discussed go in a folded **Working notes** section at the end. Spoken edits like "no, that goes in the methods" or "move the policy bit into its own section" are applied to the document instead of being written down.
-- **Grilling** mode turns a list of ideas into specs that are clear enough to hand to an agent or a colleague. Claude keeps a few questions open on the item you're discussing, each with a suggested answer, and fills in the spec as you answer them.
+- **Grilling** mode turns a list of ideas into specs that are clear enough to hand to an agent or a colleague. Claude grills you with Matt Pocock's grilling skill: every question that can be answered now on the item you're discussing, each with its options and a suggested answer, and it fills in the spec as you answer them.
 - **Notes** mode groups the content by topic.
 
 It tells speakers apart by voice. You can edit any line by hand at any time, and Claude works around your edits rather than overwriting them. Speech recognition runs on your machine. Document updates go through **your Claude subscription** via the Claude Code CLI by default, so no API key is needed. You can use an Anthropic API key instead, or any service with an OpenAI-compatible API (OpenAI, Gemini, OpenRouter, a local Ollama and so on): see [Choosing the AI service](#choosing-the-ai-service).
@@ -89,7 +89,7 @@ Each item gets these fields: **Question**, **Data**, **Approach**, **Done when**
 - **explore** is a quick go/no-go look. Question, Data and Done when are enough.
 - **spec tightly** needs every field.
 
-While you're on an item, Claude keeps up to three open questions under it, most important first, each with ➡️ a suggested answer. Saying "yes" accepts the suggestion. When something is settled, the answer goes into its field and the next question appears. Claude only grills the item you're on. New ideas raised along the way are added as items and left alone until you turn to them, so a brainstorm isn't interrupted.
+While you're on an item, Claude keeps its open questions under it: every question that can be answered now, most important first, each with ➡️ a suggested answer and, when it's a choice, options A, B, C with their trade-offs. Saying "yes" accepts the suggestion, and so does picking an option ("B"). When something is settled, the answer goes into its field and the next question appears. Claude only grills the item you're on. New ideas raised along the way are added as items and left alone until you turn to them, so a brainstorm isn't interrupted.
 
 - If people disagree, the question is marked as disputed with each position, and Claude doesn't take a side.
 - Facts that can be looked up rather than decided (is the dataset public? what licence?) are listed under the item as "Look up". Say "Claude, look that up" to research one.
@@ -107,7 +107,9 @@ If you use the [GitHub CLI](https://cli.github.com/) and are logged in (`gh auth
 - When you press **Stop**, or switch to another session, hark offers **Post updates to issues** for the issue items that changed since their last post. Untick any you don't want; closing the dialog posts nothing.
 - Comments start with "*Drafted with hark from a meeting discussion.*" To leave that line out, add `"issues_disclaimer": false` to `~/.config/hark/config.json`. No transcript goes into a comment, and hark never edits, labels or closes an issue.
 
-The method (ask everything that can be answered now, with a recommended answer, and let "yes" accept it) is adapted from Matt Pocock's [grilling skill](https://github.com/mattpocock/skills/blob/main/skills/productivity/grilling/SKILL.md), which is MIT-licensed.
+The method is Matt Pocock's [grilling skill](https://github.com/mattpocock/skills/blob/main/skills/productivity/grilling/SKILL.md) (MIT-licensed); hark's brief only says how it runs in a room and how it's written down. If the skill is installed in Claude Code (the `mattpocock-skills` plugin), hark uses that copy, so updates reach hark; otherwise it uses its own.
+
+With your Claude subscription, a grilling session keeps one Claude conversation open (through the Claude Agent SDK) instead of a fresh call per update. After the first update only what's new is sent, so updates come back about twice as fast, and Claude remembers the session's earlier rounds. The conversation starts again after a new session, a changed brief or an error, and if it can't be opened hark goes back to one call per update. Set `HARK_LIVE=0` to always use one call per update.
 
 ## Research
 
@@ -153,7 +155,7 @@ hark --add-corpus ~/Documents/project-notes
 
 When hark is on a TV or projector in the room, or shared into a Teams call, show the **room screen** instead of the document. It's read-only and in large type, and it shows only what the group is on right now:
 
-- **Grilling**: the current item's top open question with its suggested answer ("Say *yes* to accept"), the other open questions, and the spec so far, with "?" for anything not yet settled.
+- **Grilling**: the current item's top open question with its options and suggested answer ("Say *yes* to accept"), the other open questions, and the spec so far, with "?" for anything not yet settled.
 - **Meeting**: the topic under discussion, with the aims and agenda alongside showing which item you're on, and the time left if an end time is set. New decisions and actions appear in a banner for 45 seconds.
 - **Co-writing** and **Notes**: the section being written, with the outline alongside.
 
@@ -178,7 +180,7 @@ While a section is held, Claude treats it as where you're working. Anything that
 On Windows, with PowerPoint installed, hark can add slides to a deck you have open, for example the one you're presenting from. The room screen stays as it is; the deck gets only the slides you choose.
 
 - **Link the deck**: **☰ → Link a PowerPoint file…** on the laptop running hark (not on a phone), or start with `hark --pptx path\to\deck.pptx`. The link is saved with the session.
-- **Slide this**: say "Claude, put this on a slide" (or "add that to the deck"), or use **☰ → Slide this** on any device. You get what the room screen shows: an answer that popped up (up to about 30 seconds after it went), otherwise the section on screen. In grilling that's the current question with its suggested answer; in a meeting, the topic with its notes and any decisions that name it. Name a section to slide that instead: "Claude, put the methods on a slide". Requests that clearly name one section are done straight away without a Claude call; vaguer ones go to Claude. Working notes are never put on a slide.
+- **Slide this**: say "Claude, put this on a slide" (or "add that to the deck"), or use **☰ → Slide this** on any device. You get what the room screen shows: an answer that popped up (up to about 30 seconds after it went), otherwise the section on screen. In grilling that's the item's open questions, one slide each (the question, its options, then the suggested answer); say "Claude, put Q2 on a slide" for just one; in a meeting, the topic with its notes and any decisions that name it. Name a section to slide that instead: "Claude, put the methods on a slide". Requests that clearly name one section are done straight away without a Claude call; vaguer ones go to Claude. Working notes are never put on a slide.
 - **Add to slides** on a finished card in the Research panel adds that card: its title, the answer (shortened), and up to six findings as linked bullets. The card then says *added to slides*, and **Add again** adds another copy.
 - Tick **Add finished results to the linked deck while it's open** to have every finished request for sources, and every answer from your collections, added as it comes in. Quick look-ups and Claude's answers about the meeting are never added by themselves. Results already in the panel aren't added when you tick it.
 - Each slide goes at the end of the deck, using the deck's own layout, with what didn't fit, each finding's note and the original request in the speaker notes. A slide show that's running carries on where it is.

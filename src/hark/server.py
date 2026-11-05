@@ -98,6 +98,11 @@ def make_app(hub: Hub, token: str) -> web.Application:
     async def on_startup(_app):
         hub.spawn(hub.updater())
 
+    async def on_cleanup(_app):
+        live = getattr(getattr(hub, "scribe", None), "live", None)
+        if live:
+            await live.aclose()  # grilling's open Claude conversation
+
     app = web.Application(middlewares=[guard])
     app.router.add_get("/", page("index.html"))
     app.router.add_get("/present", page("present.html"))  # read-only room screen
@@ -105,4 +110,5 @@ def make_app(hub: Hub, token: str) -> web.Application:
     app.router.add_get("/ws", ws_handler)
     app.router.add_get("/static/{name}", static)
     app.on_startup.append(on_startup)
+    app.on_cleanup.append(on_cleanup)
     return app

@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import agenda, issues, slides, timing
+from . import agenda, issues, skill, slides, timing
 from .docops import apply_ops, changed_lines, find_heading, rename_in_doc
 from .engine import SR, AudioStream, Engine
 from .research import KINDS, Researcher, clean, clean_url, clip, guess_kind
@@ -252,28 +252,38 @@ class Hub:
         await self.push_research(s, job)
         return note
 
-    async def slide_this(self, s: Session, heading: str | None = None, by: str = "you", ws=None) -> None:
-        """Put a named section on a slide, or else what the room screen shows: an answer that popped up, or the section."""
+    async def slide_this(self, s: Session, heading: str | None = None, by: str = "you", ws=None, question: str | None = None) -> None:
+        """Put a named section on a slide, or else what the room screen shows: an answer that popped up, or the section.
+        A grilling item gives a slide per open question, or just `question` (e.g. "Q2")."""
         say = (lambda text: self.send(ws, {"type": "toast", "text": text})) if ws else (lambda text: self.broadcast({"type": "toast", "text": text}))
         if not self.deck.available:
             return
         if not s.pptx:
             await say("No PowerPoint deck is linked. Link one on this computer: ☰ → Link a PowerPoint file…")
             return
-        job = None if heading else self._popup_job(s)
+        job = None if heading or question else self._popup_job(s)
         if job:
             what = job.get("label") or job["q"]
             note = await self.slide_job(s, job)
         else:
             found = find_heading(s.doc, heading or s.stage or s.showing)
-            payload = slides.section_slide(s.doc, found, s.mode) if found else None
-            if not payload:
-                await say(f"There's no section called {heading} to put on a slide." if heading
+            payloads = slides.section_slides(s.doc, found, s.mode, question) if found else []
+            m = HEADING_TEXT.match(found or "")
+            what = m.group(1) if m else found
+            if not payloads:
+                await say(f"{what} has no open question {question} to put on a slide." if found and question
+                          else f"There's no section called {heading} to put on a slide." if heading
                           else "There's nothing on the room screen to put on a slide yet.")
                 return
-            m = HEADING_TEXT.match(found)
-            what = m.group(1) if m else found
-            note = await self.deck.add(s.pptx, payload)
+            if question:
+                what = f"{question} of {what}"
+            elif len(payloads) > 1:
+                what = f"{what} ({len(payloads)} questions, a slide each)"
+            note = None
+            for payload in payloads:  # in order; stop at the first that doesn't go in
+                note = await self.deck.add(s.pptx, payload)
+                if note is not None:
+                    break
         await say(f"✓ Added {what} to slides" if note is None else f"{what} wasn't added to slides: {note}")
 
     async def _link(self, ws) -> None:
@@ -519,18 +529,26 @@ class Hub:
         moves = self.stage_moves
         base = s.doc
         numbered = screen_sections(base, s.mode) if s.mode in ("outline", "notes") else None
-        prompt = build_prompt(s.brief, base, s.speaker_notes(), earlier, new, typed, adds, requested, findings, s.done[-DONE_KEPT:],
-                              on_screen=s.stage, sections=numbered, collections=self._collections_for(s),
-                              collections_unpicked=not self.active_corpus(s) and bool(self.researcher.collections()),
-                              clock=timing.clock_note(time.time(), s.ends),
-                              slide_deck=("linked" if s.pptx else "unlinked") if self.deck.available else "")
+        # Grilling keeps one conversation open (live.py): once it's under way, Claude remembers
+        # the brief, the skill and the earlier talk, so only what's new is sent.
+        live = await self.scribe.live_for(s.id, s.mode) if getattr(self.scribe, "live", None) else None
+        going = bool(live and live.continues(s.brief))
+        lead, method = live.opening() if live and not going else ("", "")
+        if s.mode == "grill" and not live:
+            method = skill.text()
+        prompt = lead + build_prompt("(as before)" if going else s.brief, base, s.speaker_notes(), [] if going else earlier, new, typed,
+                                     adds, requested, findings, s.done[-DONE_KEPT:],
+                                     on_screen=s.stage, sections=numbered, collections=self._collections_for(s),
+                                     collections_unpicked=not self.active_corpus(s) and bool(self.researcher.collections()),
+                                     clock=timing.clock_note(time.time(), s.ends),
+                                     slide_deck=("linked" if s.pptx else "unlinked") if self.deck.available else "", skill=method)
         detail = f"{len(pending)} new line{'s' * (len(pending) != 1)}" if pending else ""
         if adds:
             detail = (detail + ", " if detail else "") + "adding research"
         self.claude = {"state": "thinking", "detail": detail}
         await self.push_status()
         try:
-            data, took = await self.scribe.edit(prompt)
+            data, took = await (self.scribe.edit_live(live, prompt, s.brief) if live else self.scribe.edit(prompt))
         except ScribeError as e:
             self.promote = [(s, t) for t in adds] + self.promote  # try again with the next update
             self.retry_at = time.time() + ERROR_BACKOFF
@@ -593,7 +611,7 @@ class Hub:
         await self.push_status()
         base = s.doc
         try:
-            data, took = await self.scribe.prepare(agenda.build_prep_prompt(s.brief, text, aims, new_issues, s.doc))
+            data, took = await self.scribe.prepare(agenda.build_prep_prompt(s.brief, text, aims, new_issues, s.doc, skill.text()))
         except ScribeError as e:
             self.claude = {"state": "error", "detail": f"couldn't prepare the questions: {e}"}
             log.warning("prepare: %s", e)
@@ -630,7 +648,7 @@ class Hub:
         self.claude = {"state": "preparing", "detail": "new items"}
         await self.push_status()
         try:
-            data, took = await self.scribe.prepare_items(agenda.build_item_prep_prompt(s.brief, s.doc, new))
+            data, took = await self.scribe.prepare_items(agenda.build_item_prep_prompt(s.brief, s.doc, new, skill.text()))
         except ScribeError as e:
             self.claude = {"state": "error", "detail": f"couldn't prepare the new items: {e}"}
             log.warning("prepare items: %s", e)
@@ -803,7 +821,8 @@ class Hub:
         if isinstance(slide, str) and data.get("_no_slide"):
             log.info("ignored slide %r: hark already did the request", slide)
         elif isinstance(slide, str) and self._can_slide(s):
-            self.spawn(self.slide_this(s, slide.strip() or None, "claude"))
+            q = data.get("slide_question")
+            self.spawn(self.slide_this(s, slide.strip() or None, "claude", question=q.strip() if isinstance(q, str) and q.strip() else None))
         # Findings Claude says it added by voice request. Only mark ones whose link or
         # title really went into the document, so the panel's Add buttons stay honest.
         written = "\n".join(str(o.get("text") or "") for o in ops if isinstance(o, dict))
