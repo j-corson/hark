@@ -95,7 +95,13 @@
       openPost(m);
     } else if (m.type === "issue_posted") {
       if ($("postDlg").open && st.postRef === m.ref) $("postDlg").close();
-      toast(`✓ Posted to ${m.ref}.`);
+      if (m.error) toast(`${m.ref}: ${m.error}`, 10000);
+      else toast(m.closed ? `✓ Posted to ${m.ref} and closed it.` : `✓ Posted to ${m.ref}.`);
+    } else if (m.type === "issue_checking") {
+      if ($("postDlg").open && st.postRef === m.ref) $("postClose").textContent = "Claude is checking…";
+    } else if (m.type === "issue_unready") {
+      if ($("postDlg").open && st.postRef === m.ref) showUnready(m);
+      else toast(`${m.ref} not closed. ${unready(m)}`, 10000);
     } else if (m.type === "issue_error") {
       if ($("postDlg").open && st.postRef === m.ref) showPostError(m.error);
       else toast(`${m.ref}: ${m.error}`, 10000);
@@ -155,9 +161,10 @@
         const [ref, it] = issue;
         const btn = document.createElement("button");
         btn.type = "button"; btn.className = "quiet issuebtn"; btn.dataset.ref = ref;
-        btn.disabled = !it.changed;
-        btn.textContent = it.changed ? "Post to issue" : "Nothing new to post";
-        btn.title = it.changed ? `Preview a comment for ${ref} with this item's spec` : `Nothing has changed since the last post to ${ref}`;
+        btn.disabled = !it.changed && (it.closed || !it.posts);
+        btn.textContent = it.changed ? "Post to issue" : it.closed ? "Closed" : it.posts ? "Close issue" : "Nothing new to post";
+        btn.title = it.changed ? `Preview a comment for ${ref} with this item's spec` : it.closed ? `${ref} was closed from here`
+          : it.posts ? `Nothing new to post: Claude can check every question was answered, then close ${ref}` : `Nothing has changed since the last post to ${ref}`;
         node.appendChild(btn);
         if (it.url) {
           const a = document.createElement("a");
@@ -643,17 +650,42 @@
     $("postNote").textContent = m.note || ""; $("postNote").hidden = !m.note;
     $("postBody").value = m.body;
     $("postErr").hidden = true; $("postGo").disabled = false; $("postGo").textContent = "Post";
+    $("postGo").hidden = !m.changed;  // nothing new: only closing is left to do
+    const blocked = (m.blockers || []).length > 0;
+    $("postClose").hidden = !!m.closed; $("postClose").disabled = blocked; $("postClose").textContent = "Post and close";
+    $("postClose").title = blocked ? `Not yet: ${m.blockers.join("; ")}.`
+      : "Claude checks every question this item was asked was answered; if so, hark sets Status to ready, posts this comment and closes the issue.";
     if (!$("postDlg").open) $("postDlg").showModal();
+  }
+  function postButtons() {
+    $("postGo").disabled = false; $("postGo").textContent = "Post";
+    $("postClose").disabled = false; $("postClose").textContent = "Post and close";
   }
   function showPostError(text) {
     $("postErr").textContent = `Nothing was posted: ${text}`; $("postErr").hidden = false;
-    $("postGo").disabled = false; $("postGo").textContent = "Post";
+    postButtons();
+  }
+  function unready(m) {
+    const gaps = m.gaps || [], n = m.added || 0;
+    const round = n ? `Claude found ${n} more question${n === 1 ? "" : "s"} to settle; ${n === 1 ? "it's" : "they're"} on the item now.` : "";
+    return [round, gaps.length ? `Claude found: ${gaps.join("; ")}` : ""].filter(Boolean).join(" ");
+  }
+  function showUnready(m) {
+    $("postErr").textContent = `Not closed, nothing posted. ${unready(m)}`; $("postErr").hidden = false;
+    postButtons();
+    if (m.added) $("postClose").disabled = true;  // the new round is open: answer it first
   }
   $("postGo").onclick = () => {
     const body = $("postBody").value.trim();
     if (!body) { showPostError("the comment is empty."); return; }
     $("postGo").disabled = true; $("postGo").textContent = "Posting…"; $("postErr").hidden = true;
     send({ type: "issue_post", ref: st.postRef, body, snapshot: st.postSnapshot, session: st.session && st.session.id });
+  };
+  $("postClose").onclick = () => {
+    const body = $("postBody").value.trim();
+    if (!body) { showPostError("the comment is empty."); return; }
+    $("postClose").disabled = $("postGo").disabled = true; $("postClose").textContent = "Closing…"; $("postErr").hidden = true;
+    send({ type: "issue_close", ref: st.postRef, body, session: st.session && st.session.id });
   };
   // On Stop, or on leaving a session: one dialog for every issue item that changed since its last post.
   function openOffer(m) {

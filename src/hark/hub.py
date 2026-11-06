@@ -25,9 +25,9 @@ from .docops import apply_ops, changed_lines, find_heading, rename_in_doc
 from .engine import SR, AudioStream, Engine
 from .research import KINDS, Researcher, clean, clean_url, clip, guess_kind
 from .screen import WAKE, addressed, screen_request, screen_sections  # noqa: F401 (WAKE is used by tests)
-from .scribe import Scribe, ScribeError, build_prompt, build_tidy_prompt
+from .scribe import Scribe, ScribeError, build_close_prompt, build_prompt, build_tidy_prompt
 from .modes import MODES
-from .session import Session, list_sessions
+from .session import Session, list_sessions, read_versions
 from .speakers import UNKNOWN
 
 log = logging.getLogger("hark")
@@ -1039,7 +1039,7 @@ class Hub:
             posted = s.issues.get(ref) or {}
             posts = posted.get("posts") or []
             items[ref] = {"heading": head, "changed": issues.changed(posted.get("snapshot"), issues.item_section(s.doc, head)),
-                          "url": posts[-1]["url"] if posts else "", "posts": len(posts)}
+                          "url": posts[-1]["url"] if posts else "", "posts": len(posts), "closed": bool(posted.get("closed"))}
         if self.issues_repo is None:
             self.issues_repo = config.issue_settings()["repo"]
         return {"available": self.gh_ok, "repo": self.issues_repo, "items": items}
@@ -1114,7 +1114,8 @@ class Hub:
         d = datetime.fromtimestamp(s.created)
         body = issues.comment_body(s.doc, head, s.title, f"{d.day} {d:%b %Y}", posted.get("snapshot"), config.issue_settings()["disclaimer"])
         return {"ref": ref, "heading": head, "body": body, "note": issues.readiness(section) or "",
-                "changed": issues.changed(posted.get("snapshot"), section), "snapshot": section}
+                "changed": issues.changed(posted.get("snapshot"), section), "snapshot": section,
+                "blockers": issues.close_blockers(section), "closed": bool(posted.get("closed"))}
 
     async def _post(self, s: Session, ref: str, body: str, snapshot=None) -> dict:
         """Post one comment. {"ref", "url"} or {"ref", "error"}; nothing is recorded unless gh says it worked.
@@ -1134,6 +1135,63 @@ class Hub:
         s.record_post(ref, url, snapshot if isinstance(snapshot, str) and snapshot.strip() else issues.item_section(s.doc, head))
         s.save()
         return {"ref": ref, "url": url}
+
+    async def _close(self, ws, s: Session, ref: str, body: str) -> dict:
+        """Post the item's last comment and close its issue, once Claude has checked every question it was asked
+        was answered and the frontier is empty, as at the end of a grilling round. A next round Claude finds goes
+        under the item's Open questions instead. {"ref", "url", "closed"}, {"ref", "gaps", "added"} (not ready:
+        nothing posted; `added` is how many new questions) or {"ref", "error"}."""
+        head = issues.issue_items(s.doc).get(ref)
+        parsed = issues.parse_ref(ref)
+        if not head or not parsed:
+            return {"ref": ref, "error": "That item no longer has an Issue field, so it isn't linked to an issue."}
+        if not self.gh_ok:
+            return {"ref": ref, "error": issues.GH_NEEDED + "."}
+        if not body.strip():
+            return {"ref": ref, "error": "The comment is empty."}
+        section = issues.item_section(s.doc, head)
+        if blockers := issues.close_blockers(section):
+            return {"ref": ref, "gaps": blockers}
+        if not self.scribe.available:
+            return {"ref": ref, "error": "Claude has to check the item before it is closed, and Claude isn't available."}
+        await self.send(ws, {"type": "issue_checking", "ref": ref})
+        try:
+            issue = await self.gh.view(*parsed)
+        except issues.GhError as e:
+            return {"ref": ref, "error": str(e)}
+        s.save()  # so the versions log has every edit, for the questions asked along the way
+        docs = [e["doc"] for e in read_versions(s.dir / "versions.jsonl") if isinstance(e.get("doc"), str)] + [s.doc]
+        asked = issues.asked_questions(docs, ref)
+        prompt = build_close_prompt(f"{issue['title']}\n\n{issue['body']}", section, asked, issues.parked_for(s.doc, head, ref),
+                                    issues.next_label(asked), skill.text())
+        try:
+            data, _ = await self.scribe.check_close(prompt)
+        except ScribeError as e:
+            return {"ref": ref, "error": f"Claude couldn't check the item: {e}"}
+        gaps = [str(g).strip() for g in data.get("gaps") or [] if str(g).strip()]
+        more = [q for q in data.get("next_round") or [] if isinstance(q, str) and re.match(r"^\s*[-*]\s+\*\*Q\d+", q)]
+        head = issues.issue_items(s.doc).get(ref) or head  # the document may have moved on while Claude checked
+        old = s.doc
+        if more:  # the next round: on the item for the room, and nothing posted
+            now = issues.item_section(old, head)
+            if s.set_doc(old.replace(now, issues.add_questions(now, more), 1), by="claude") and s is self.session:
+                await self.push_doc(changed_lines(old, s.doc), by="claude")
+            return {"ref": ref, "gaps": gaps, "added": len(more)}
+        if not data.get("ready") or gaps:
+            return {"ref": ref, "gaps": gaps or ["Claude found the item isn't finished yet."]}
+        ready = issues.item_section(old, head)
+        if s.set_doc(old.replace(ready, issues.with_status(ready, "ready"), 1), by="claude") and s is self.session:
+            await self.push_doc(changed_lines(old, s.doc), by="claude")
+        r = await self._post(s, ref, issues.closing_body(body, str(data.get("resolution") or "")))
+        if "error" in r:
+            return r
+        try:
+            await self.gh.close(*parsed)
+        except issues.GhError as e:
+            return {**r, "error": f"The comment was posted, but the issue wasn't closed: {e}"}
+        s.issues[ref]["closed"] = time.time()
+        s.save()
+        return {**r, "closed": True}
 
     async def _offer_updates(self, ws, s: Session) -> None:
         """On Stop, or on leaving a session: offer to post the issue items that changed since their last post."""
@@ -1168,6 +1226,13 @@ class Hub:
             s = self._session_by_id(msg.get("session"))
             r = await self._post(s, str(msg.get("ref") or ""), str(msg.get("body") or ""), msg.get("snapshot")) if s else {"ref": msg.get("ref"), "error": "That session wasn't found."}
             await self.send(ws, {"type": "issue_error" if "error" in r else "issue_posted", **r})
+            if s is self.session and "url" in r:
+                await self.broadcast({"type": "issues", "issues": self.issues_public(s)})
+        elif kind == "issue_close":
+            s = self._session_by_id(msg.get("session"))
+            r = await self._close(ws, s, str(msg.get("ref") or ""), str(msg.get("body") or "")) if s else {"ref": msg.get("ref"), "error": "That session wasn't found."}
+            await self.send(ws, {"type": "issue_error" if "error" in r and "url" not in r else
+                                 "issue_unready" if "gaps" in r else "issue_posted", **r})
             if s is self.session and "url" in r:
                 await self.broadcast({"type": "issues", "issues": self.issues_public(s)})
         elif kind == "issues_post_many":

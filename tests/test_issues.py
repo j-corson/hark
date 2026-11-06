@@ -194,3 +194,37 @@ def test_terms_without_a_bullet_and_short_titles_in_parked():
     assert "- **Flexibility**: shifting demand" in issues.comment_body(doc, HEAD, "T", "1 Jan 2026", None, False)
     short = "# T\n\n## Items\n\n### 1. Data\n- **Issue**: acme/r#1\n- **Status**: being grilled\n\n## Parked\n- **Q1. Sample**: Which data? (item 2)\n"
     assert issues.parked_for(short, "### 1. Data", "acme/r#1") == []
+
+
+def test_close_blockers_open_questions_unset_fields_and_parked():
+    section = ("### 1. X\n- **Issue**: a/b#1\n- **Data**: ?\n- **Status**: being grilled\n#### Open questions\n"
+               "- **Q2. Years**: Which years? (disputed: Sam wants 2015)\n")
+    assert issues.close_blockers(section) == ["Q2. Years is still open (disputed: Sam wants 2015)", "**Data** isn't filled in"]
+    assert issues.close_blockers("### 1. X\n- **Data**: smart meters\n- **Status**: ?\n") == []
+    assert issues.close_blockers("### 1. X\n- **Status**: parked\n") == ["the item is parked"]
+
+
+def test_asked_questions_across_versions_latest_wording_once():
+    v1 = "## Items\n\n### 1. X\n- **Issue**: a/b#1\n#### Open questions\n- **Q1. Years**: Which years?\n"
+    v2 = v1.replace("Which years?", "Which years, exactly?") + "- **Q2. Who**: Who cares?\n"
+    v3 = "## Items\n\n### 1. X\n- **Issue**: a/b#1\n- **Years**: 2010 on\n#### Open questions\n"
+    assert issues.asked_questions([v1, v2, v3, "# no items"], "a/b#1") == [
+        "- **Q1. Years**: Which years, exactly?", "- **Q2. Who**: Who cares?"]
+
+
+def test_next_label_and_add_questions():
+    assert issues.next_label(["- **Q3. A**: a", "- **Q12. B**: b", "  - **A.** x"]) == "Q13"
+    assert issues.next_label([]) == "Q1"
+    q = "- **Q2. New**: Why?\n  - **A.** Because: short"
+    item = "### 1. X\n- **Status**: being grilled\n#### Open questions\n\n#### Notes\n- n\n"
+    assert issues.add_questions(item, [q]) == ("### 1. X\n- **Status**: being grilled\n#### Open questions\n"
+                                               "- **Q2. New**: Why?\n  - **A.** Because: short\n\n#### Notes\n- n\n")
+    assert issues.add_questions("### 1. X\n- **Status**: ?\n", [q]) == f"### 1. X\n- **Status**: ?\n#### Open questions\n{q}\n"
+    assert issues.add_questions("### 1. X\n", []) == "### 1. X\n"
+
+
+def test_closing_body_sets_status_and_puts_the_resolution_first():
+    body = f"{issues.DISCLAIMER}\n\n- **Question**: q\n- **Status**: being grilled\n\n---\n_S, 1 Jan 2026_\n"
+    out = issues.closing_body(body, "Use 2010 on.")
+    assert out.startswith(f"{issues.DISCLAIMER}\n\n**Resolved**: Use 2010 on.\n\n- **Question**: q\n- **Status**: ready\n")
+    assert issues.closing_body("- **Status**: x", "") == "- **Status**: ready"

@@ -87,6 +87,18 @@ TIDY_SCHEMA = {
     "required": ["document"],
 }
 
+CLOSE_SYSTEM = """You check whether a grilling item is finished, before its GitHub issue is closed. You receive the <grilling_skill> the session ran, the <issue> the item came from, the <item> as it stands in the document, <asked>: every open question the item was asked during the session, in its last wording, <parked>: what was parked from it, and <next_label>: the label for a new question.
+The item is ready only if every question in <asked> was answered: its decision is written into the item's fields or notes, or it is in <parked>. A suggested answer counts only if the item's fields now say it. Also check the item answers what <issue> asks, and that no field still says "?", "TBD" or the like.
+Then recompute the frontier, as the skill does at the end of a round: the decisions whose prerequisites the answers have now settled, and that nobody has decided yet. Only real decisions the group still has to make, never facts to look up, and nothing already answered, parked or out of the item's scope. If the frontier is empty, the item is done.
+In `ready`, true only if every question was answered and the frontier is empty. In `gaps`, one short line per thing still missing, naming the question by its label ("Q3: no decision on who gives consent"); empty when ready. In `next_round`, the frontier as new open questions, numbered on from <next_label>, each in the item's format: `- **Q15. Short title**: the question, in at most two plain sentences. ➡️ Suggested: <your recommended answer>`, then, when the answer is a choice, two to four options on indented lines `  - **A.** <option>: <its trade-off>`; one string per question, its options included; empty when the frontier is empty. In `resolution`, one or two sentences for the issue: what was decided, in the item's own words. Never invent a decision nobody made."""
+
+CLOSE_SCHEMA = {
+    "type": "object",
+    "properties": {"ready": {"type": "boolean"}, "gaps": {"type": "array", "items": {"type": "string"}},
+                   "next_round": {"type": "array", "items": {"type": "string"}}, "resolution": {"type": "string"}},
+    "required": ["ready", "gaps", "next_round", "resolution"],
+}
+
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -173,6 +185,15 @@ def build_prompt(brief: str, document: str, speakers: list[str], earlier: list[s
     return "\n\n".join(parts)
 
 
+def build_close_prompt(issue: str, item: str, asked: list[str], parked: list[str], next_label: str, method: str = "") -> str:
+    parts = [f"<grilling_skill>\n{method.strip()}\n</grilling_skill>"] if method.strip() else []
+    parts += [f"<issue>\n{issue.strip()}\n</issue>", f"<item>\n{item.strip()}\n</item>",
+              "<asked>\n" + ("\n".join(asked) or "(none)") + "\n</asked>",
+              "<parked>\n" + ("\n".join(parked) or "(none)") + "\n</parked>",
+              f"<next_label>{next_label}</next_label>", "Is this item ready to close?"]
+    return "\n\n".join(parts)
+
+
 def build_tidy_prompt(brief: str, document: str, speakers: list[str]) -> str:
     parts = [f"<brief>\n{brief.strip()}\n</brief>"]
     if speakers:
@@ -225,6 +246,11 @@ class Scribe:
         """A tidy-up: the whole document back, consolidated. Worth a little more thought than an update."""
         return await self.backend.json(TIDY_SYSTEM, TIDY_SCHEMA, prompt, effort="medium" if self.effort else None,
                                        timeout=timeout, hint='{"document": "...", "summary": "..."}')
+
+    async def check_close(self, prompt: str, timeout: float = 120) -> tuple[dict, float]:
+        """Whether a grilling item has every question answered, before its issue is closed."""
+        return await self.backend.json(CLOSE_SYSTEM, CLOSE_SCHEMA, prompt, effort="medium" if self.effort else None,
+                                       timeout=timeout, hint='{"ready": false, "gaps": ["..."], "resolution": "..."}')
 
     async def prepare(self, prompt: str, timeout: float = 360) -> tuple[dict, float]:
         """Lay out a grilling session from its agenda, with first questions. One bigger call, before the talking starts."""

@@ -3,7 +3,9 @@
 Everything goes through the GitHub CLI (`gh`), so hark never sees a token. An item
 is an *issue item* while it has a `- **Issue**: owner/repo#N` field; that field is
 the link, wherever the item moves and whatever it is renamed to. Comments are
-built from the document as it stands, with no Claude call.
+built from the document as it stands, with no Claude call. Closing an issue is
+the one step that asks Claude: it checks every question the item was asked was
+answered before hark posts the last comment and closes the issue.
 """
 
 from __future__ import annotations
@@ -135,6 +137,11 @@ class GhRunner:
         if not url:
             raise GhError("gh didn't say where the comment went, so check the issue before posting again")
         return url
+
+    async def close(self, repo: str, n: int) -> None:
+        """Close an issue as completed."""
+        self._check(repo, n)
+        await self._run(["issue", "close", str(n), "-R", repo, "--reason", "completed"])
 
 
 # -- issue items in the document -------------------------------------------
@@ -350,6 +357,66 @@ def readiness(section: str) -> str | None:
     if status.lower().startswith("ready") and not n:
         return None
     return f"Status: {status}" + (f", {n} open question{'s' * (n != 1)}" if n else "")
+
+
+def close_blockers(section: str) -> list[str]:
+    """Why an item can't be closed yet, without asking Claude: open questions, or fields still "?". Empty: Claude may check it."""
+    p = _parse(section)
+    out = [f"{q['label']} is still open" + (f" (disputed: {q['disputed']})" if q["disputed"] else "") for q in p["questions"]]
+    out += [f"**{name}** isn't filled in" for name, value, _ in p["fields"] if value in UNSET and name.lower() != "status"]
+    if any(name.lower() == "status" and value.lower().startswith("parked") for name, value, _ in p["fields"]):
+        out.append("the item is parked")
+    return out
+
+
+def asked_questions(docs: list[str], ref: str) -> list[str]:
+    """Every open question the item had in any version of the document, oldest first, each in its latest wording."""
+    seen: dict[str, str] = {}
+    for doc in docs:
+        head = issue_items(doc).get(ref)
+        for q in _parse(item_section(doc, head)).get("questions", []) if head else []:
+            seen.pop(q["key"], None)
+            seen[q["key"]] = q["line"]
+    return list(seen.values())
+
+
+def next_label(asked: list[str]) -> str:
+    """The label for a new question: one past the highest Q number the item was ever asked."""
+    nums = [int(m.group(1)) for line in asked if (m := re.match(r"^[-*]\s+\*\*Q(\d+)", line))]
+    return f"Q{max(nums, default=0) + 1}"
+
+
+def add_questions(section: str, questions: list[str]) -> str:
+    """The item with `questions` (each a question bullet with its indented options) under its Open questions."""
+    lines = [l.rstrip() for q in questions for l in q.strip("\n").split("\n") if l.strip()]
+    if not lines:
+        return section
+    body = section.rstrip("\n").split("\n")
+    at = next((i for i, l in enumerate(body) if _level(l) and l.strip().lstrip("#").strip().lower() == "open questions"), None)
+    if at is None:
+        body += ["#### Open questions"] + lines
+    else:
+        end = next((i for i in range(at + 1, len(body)) if _level(body[i])), len(body))
+        while end > at + 1 and not body[end - 1].strip():
+            end -= 1
+        body[end:end] = lines
+    return "\n".join(body) + "\n" * (len(section) - len(section.rstrip("\n")) or 1)
+
+
+def with_status(text: str, status: str) -> str:
+    """`text` (an item section or a comment) with its first Status field set to `status`."""
+    return re.sub(r"^([-*]\s+\*\*Status\*\*:\s*).*$", lambda m: m.group(1) + status, text, count=1, flags=re.M)
+
+
+def closing_body(body: str, resolution: str) -> str:
+    """The last comment before closing: Status ready, and Claude's one-line resolution at the top (after the disclaimer)."""
+    body = with_status(body, "ready")
+    line = f"**Resolved**: {resolution.strip()}" if resolution.strip() else ""
+    if not line:
+        return body
+    if body.startswith(DISCLAIMER):
+        return f"{DISCLAIMER}\n\n{line}{body[len(DISCLAIMER):]}"
+    return f"{line}\n\n{body}"
 
 
 def _terms(doc: str, section: str) -> list[str]:

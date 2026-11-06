@@ -20,7 +20,7 @@ class FakeGh:
                                                "url": "https://github.com/acme/research/issues/12", "state": "OPEN"},
                        ("acme/research", 7): {"title": "Heat pump survey", "body": "A survey of 1,000 heat pump owners.",
                                               "url": "https://github.com/acme/research/issues/7", "state": "CLOSED"}}
-        self.fail, self.comments, self.views = fail, [], []
+        self.fail, self.comments, self.views, self.closed = fail, [], [], []
 
     async def available(self):
         return True
@@ -40,6 +40,9 @@ class FakeGh:
         self.comments.append((repo, n, body))
         return f"https://github.com/{repo}/issues/{n}#issuecomment-{len(self.comments)}"
 
+    async def close(self, repo, n):
+        self.closed.append((repo, n))
+
 
 class FakeScribe:
     available = True
@@ -47,6 +50,7 @@ class FakeScribe:
 
     def __init__(self, document=None, items=None):
         self.document, self.items, self.prompts = document, items, []
+        self.verdict = {"ready": True, "gaps": [], "next_round": [], "resolution": "Every response since 2010, from the Ofgem site."}
 
     async def prepare(self, prompt):
         self.prompts.append(prompt)
@@ -55,6 +59,10 @@ class FakeScribe:
     async def prepare_items(self, prompt):
         self.prompts.append(prompt)
         return {"items": self.items, "summary": "1 item"}, 1.0
+
+    async def check_close(self, prompt):
+        self.prompts.append(prompt)
+        return self.verdict, 1.0
 
 
 class WS:
@@ -176,8 +184,8 @@ def test_issues_only_in_grilling_mode(tmp_path):
     assert hub.gh.views == [] and hub.issues_public(hub.session)["available"] is False
 
 
-def started(tmp_path, gh=None):
-    hub = make_hub(tmp_path, FakeScribe(GRILL), gh=gh)
+def started(tmp_path, gh=None, scribe=None):
+    hub = make_hub(tmp_path, scribe or FakeScribe(GRILL), gh=gh)
     fetched, _ = asyncio.run(hub.fetch_issues(["acme/research#12", "acme/research#7"]))
     asyncio.run(hub.load_agenda("", "grill", issues=fetched))
     hub.prep = None
@@ -304,3 +312,90 @@ def test_snapshot_is_the_item_as_previewed(tmp_path):
     s.set_doc(s.doc.replace("- **Issue**: acme/research#12\n- **Question**: ?", "- **Issue**: acme/research#12\n- **Question**: later"))
     asyncio.run(hub.handle(ws, {"type": "issue_post", "ref": "acme/research#12", "body": pv["body"], "snapshot": pv["snapshot"]}))
     assert hub.issues_public(s)["items"]["acme/research#12"]["changed"]
+
+
+ASKING = ("### 1. Ofgem consultation responses\n- **Issue**: acme/research#12\n- **Question**: how views changed\n"
+          "- **Status**: being grilled\n#### Open questions\n- **Q1. Years**: Which years? ➡️ Suggested: 2010 to now.\n")
+ANSWERED = ("### 1. Ofgem consultation responses\n- **Issue**: acme/research#12\n- **Question**: how views changed, 2010 to now\n"
+            "- **Status**: being grilled\n#### Open questions\n")
+
+
+def grilled(tmp_path, scribe=None, gh=None):
+    """An issue item that was asked Q1, then had it answered."""
+    hub, ws = started(tmp_path, gh, scribe)
+    s = hub.session
+    section = issues.item_section(s.doc, issues.issue_items(s.doc)["acme/research#12"])
+    s.set_doc(s.doc.replace(section, ASKING))
+    s.set_doc(s.doc.replace(ASKING, ANSWERED))
+    return hub, ws, s
+
+
+def test_close_is_offered_only_with_no_open_questions(tmp_path):
+    hub, ws = started(tmp_path)
+    s = hub.session
+    section = issues.item_section(s.doc, issues.issue_items(s.doc)["acme/research#12"])
+    s.set_doc(s.doc.replace(section, ASKING))
+    asyncio.run(hub.handle(ws, {"type": "issue_preview", "ref": "acme/research#12"}))
+    assert ws.of("issue_preview")[-1]["blockers"] == ["Q1. Years is still open"]
+    # Asking anyway changes nothing and never calls Claude.
+    asyncio.run(hub.handle(ws, {"type": "issue_close", "ref": "acme/research#12", "body": "x"}))
+    assert ws.of("issue_unready")[-1]["gaps"] == ["Q1. Years is still open"]
+    assert hub.gh.comments == [] and hub.gh.closed == [] and not hub.scribe.prompts
+
+
+def test_post_and_close_after_claude_checks(tmp_path):
+    hub, ws, s = grilled(tmp_path)
+    asyncio.run(hub.handle(ws, {"type": "issue_preview", "ref": "acme/research#12"}))
+    pv = ws.of("issue_preview")[-1]
+    assert pv["blockers"] == [] and not pv["closed"]
+    asyncio.run(hub.handle(ws, {"type": "issue_close", "ref": "acme/research#12", "body": pv["body"]}))
+    prompt = hub.scribe.prompts[-1]
+    assert "<asked>\n- **Q1. Years**: Which years?" in prompt and BODY in prompt  # the question asked earlier, and the issue
+    assert "<next_label>Q2</next_label>" in prompt and "<grilling_skill>" in prompt
+    assert ws.of("issue_checking") and ws.of("issue_posted")[-1]["closed"]
+    [(_, _, body)] = hub.gh.comments
+    assert body.startswith("> *Drafted with hark from a meeting discussion.*\n\n**Resolved**: Every response since 2010")
+    assert "- **Status**: ready" in body and "being grilled" not in body
+    assert hub.gh.closed == [("acme/research", 12)]
+    assert "- **Status**: ready" in issues.item_section(s.doc, issues.issue_items(s.doc)["acme/research#12"])
+    item = hub.issues_public(s)["items"]["acme/research#12"]
+    assert item["closed"] and not item["changed"]
+
+
+def test_claude_finding_gaps_posts_nothing(tmp_path):
+    scribe = FakeScribe(GRILL)
+    scribe.verdict = {"ready": False, "gaps": ["Q1: the years were never settled"], "resolution": ""}
+    hub, ws, s = grilled(tmp_path, scribe)
+    asyncio.run(hub.handle(ws, {"type": "issue_close", "ref": "acme/research#12", "body": "x"}))
+    assert ws.of("issue_unready")[-1]["gaps"] == ["Q1: the years were never settled"]
+    assert hub.gh.comments == [] and hub.gh.closed == [] and "being grilled" in s.doc
+
+
+def test_a_next_round_goes_on_the_item_and_nothing_is_closed(tmp_path):
+    scribe = FakeScribe(GRILL)
+    scribe.verdict = {"ready": False, "gaps": [], "resolution": "",
+                      "next_round": ["- **Q2. Which regions**: All of GB, or England only? ➡️ Suggested: all of GB.\n"
+                                     "  - **A.** All of GB: more data\n  - **B.** England only: simpler",
+                                     "not a question"]}
+    hub, ws, s = grilled(tmp_path, scribe)
+    asyncio.run(hub.handle(ws, {"type": "issue_close", "ref": "acme/research#12", "body": "x"}))
+    assert ws.of("issue_unready")[-1] == {"type": "issue_unready", "ref": "acme/research#12", "gaps": [], "added": 1}
+    section = issues.item_section(s.doc, issues.issue_items(s.doc)["acme/research#12"])
+    assert section.endswith("#### Open questions\n- **Q2. Which regions**: All of GB, or England only? ➡️ Suggested: all of GB.\n"
+                            "  - **A.** All of GB: more data\n  - **B.** England only: simpler")
+    assert "not a question" not in s.doc and "being grilled" in section
+    assert hub.gh.comments == [] and hub.gh.closed == []
+    # The new round is open now, so the next try is stopped before Claude.
+    asyncio.run(hub.handle(ws, {"type": "issue_close", "ref": "acme/research#12", "body": "x"}))
+    assert ws.of("issue_unready")[-1]["gaps"] == ["Q2. Which regions is still open"] and len(scribe.prompts) == 1
+
+
+def test_close_failing_after_the_post_says_so(tmp_path):
+    class NoClose(FakeGh):
+        async def close(self, repo, n):
+            raise GhError("HTTP 403")
+    hub, ws, s = grilled(tmp_path, gh=NoClose())
+    asyncio.run(hub.handle(ws, {"type": "issue_close", "ref": "acme/research#12", "body": "x"}))
+    msg = ws.of("issue_posted")[-1]
+    assert msg["url"] and "wasn't closed: HTTP 403" in msg["error"] and not msg.get("closed")
+    assert not s.issues["acme/research#12"].get("closed")
